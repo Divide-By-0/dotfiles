@@ -79,7 +79,7 @@ nnoremap <leader>h :wincmd h<CR>
 nnoremap <leader>j :wincmd j<CR>
 nnoremap <leader>k :wincmd k<CR>
 nnoremap <leader>l :wincmd l<CR>
-nnoremap <leader>q :wincmd q<CR>
+"nnoremap <leader>q :wincmd q<CR>
 
 " Go to tab by number
 noremap <leader>1 1gt
