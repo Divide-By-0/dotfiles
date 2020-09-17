@@ -31,7 +31,7 @@ highlight ColorColumn ctermbg=0 guibg=lightgrey
 call plug#begin('~/.vim/plugged')
 Plug 'morhetz/gruvbox'
 Plug 'tpope/vim-fugitive'
-Plug 'git@github.com:kien/ctrlp.vim.git'
+Plug 'ctrlpvim/ctrlp.vim'
 "Plug 'git@github.com:Valloric/YouCompleteMe.git'
 Plug 'neoclide/coc.nvim', {'branch': 'release'}
 Plug 'mbbill/undotree' 
@@ -85,6 +85,7 @@ nnoremap <leader>n :vsp<CR>
 nnoremap <leader>u :UndotreeShow<CR>
 nnoremap <leader>pv :wincmd v<bar> :Ex <bar> :vertical resize 30<CR>
 nnoremap <leader>ps :Rg<SPACE>
+nnoremap <leader>cd :CocDiagnostic<CR>
 nnoremap <silent> <Leader>= :vertical resize +5<CR>
 nnoremap <silent> <Leader>- :vertical resize -5<CR>
 " dragging selection up or down in visual mode
