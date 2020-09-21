@@ -1,9 +1,0 @@
-let g:netrw_dirhistmax  =10
-let g:netrw_dirhistcnt =7
-let g:netrw_dirhist_7='/Users/justinglibert/Dev/repositories/personal/dotfiles/.config/nvim'
-let g:netrw_dirhist_6='/Users/justinglibert/Dev/repositories/personal/dotfiles/.config/nvim/keys'
-let g:netrw_dirhist_5='/Users/justinglibert/Dev/repositories/personal/dotfiles/.config/nvim'
-let g:netrw_dirhist_4='/Users/justinglibert/Dev/repositories/personal/dotfiles/.config/nvim/keys'
-let g:netrw_dirhist_3='/Users/justinglibert/Dev/repositories/personal/dotfiles/.config/nvim'
-let g:netrw_dirhist_2='/Users/justinglibert/Dev/repositories/personal/dotfiles/.config/nvim/plug-config'
-let g:netrw_dirhist_1='/Users/justinglibert/Dev/repositories/personal/dotfiles/.config/nvim'
