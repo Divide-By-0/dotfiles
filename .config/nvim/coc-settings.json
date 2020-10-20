@@ -10,7 +10,8 @@
     "python"
   ],
   "python.jediEnabled": false,
-  "python.linting.enabled": false,
+  "python.linting.mypyEnabled": true,
+  "python.linting.enabled": true,
   "python.linting.pylintEnabled": false,
   "snippets.ultisnips.directories": [
     "UltiSnips",

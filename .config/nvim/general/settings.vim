@@ -37,6 +37,7 @@ set clipboard=unnamedplus               " Copy paste between vim and everything 
 set noswapfile
 set incsearch
 set noerrorbells visualbell t_vb=
+set foldlevelstart=20
 
 au! BufWritePost $MYVIMRC source %      " auto source when writing to init.vm alternatively you can run :source $MYVIMRC
 
