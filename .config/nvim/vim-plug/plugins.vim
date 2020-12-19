@@ -28,4 +28,5 @@ call plug#begin('~/.config/nvim/autoload/plugged')
     Plug 'tmhedberg/SimpylFold'
     Plug 'Konfekt/FastFold'
     Plug 'vim-scripts/confirm-quit'
+    Plug 'fatih/vim-go', { 'do': ':GoUpdateBinaries' }
 call plug#end()
