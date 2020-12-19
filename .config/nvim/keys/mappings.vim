@@ -59,3 +59,6 @@ nnoremap <leader>n :vsp<CR>
 vnoremap J :m '>+1<CR>gv=gv
 vnoremap K :m '<-2<CR>gv=gv
 nnoremap <esc> :noh<return><esc>
+
+" coc stuff
+nnoremap <leader> F :call CocAction('format')<CR>

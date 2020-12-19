@@ -17,6 +17,7 @@
     "UltiSnips",
     "~/.config/nvim/utils/snips"
   ],
+  "erlang_ls.erlang_ls_path": "/home/justin/erlang_ls/_build/default/bin/erlang_ls",
   "explorer.width": 30,
   "explorer.icon.enableNerdfont": true,
   "explorer.previewAction.onHover": false,
@@ -31,20 +32,9 @@
   "languageserver": {
     "haskell": {
       "command": "haskell-language-server-wrapper",
-      "args": [
-        "--lsp"
-      ],
-      "rootPatterns": [
-        "*.cabal",
-        "stack.yaml",
-        "cabal.project",
-        "package.yaml",
-        "hie.yaml"
-      ],
-      "filetypes": [
-        "haskell",
-        "lhaskell"
-      ]
-    }
+      "args": ["--lsp"],
+      "rootPatterns": ["*.cabal", "stack.yaml", "cabal.project", "package.yaml", "hie.yaml"],
+      "filetypes": ["haskell", "lhaskell"]
+    } 
   }
 }
