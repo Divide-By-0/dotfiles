@@ -13,7 +13,7 @@ call plug#begin('~/.config/nvim/autoload/plugged')
     " File Explorer
     " Auto pairs for '(' '[' '{'
     Plug 'jiangmiao/auto-pairs'
-    Plug 'morhetz/gruvbox'
+    Plug 'dkasak/gruvbox'
     Plug 'tpope/vim-fugitive'
     " Stable version of coc
     Plug 'neoclide/coc.nvim', {'branch': 'release'}
@@ -27,4 +27,7 @@ call plug#begin('~/.config/nvim/autoload/plugged')
     Plug 'airblade/vim-rooter'
     Plug 'fatih/vim-go', { 'do': ':GoUpdateBinaries' }
     Plug 'christoomey/vim-tmux-navigator'
+    Plug 'meck/vim-brittany'
+    Plug 'neovimhaskell/haskell-vim'
+    Plug 'kassio/neoterm'
 call plug#end()
