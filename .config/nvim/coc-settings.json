@@ -17,7 +17,7 @@
     "UltiSnips",
     "~/.config/nvim/utils/snips"
   ],
-  "erlang_ls.erlang_ls_path": "/home/justin/erlang_ls/_build/default/bin/erlang_ls",
+  "erlang_ls.erlang_ls_path": "/home/aayush/erlang_ls/_build/default/bin/erlang_ls",
   "explorer.width": 30,
   "explorer.icon.enableNerdfont": true,
   "explorer.previewAction.onHover": false,
