@@ -1,3 +1,4 @@
+set t_Co=256
 syntax on
 set noerrorbells visualbell t_vb=
 
