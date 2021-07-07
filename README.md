@@ -8,3 +8,5 @@ sh install.sh
 vi <somefile>
 /PlugInstall
 ```
+
+:PlugInstall on last step instead on failure.
