@@ -10,6 +10,6 @@ sudo mv `pwd`/speak_date.sh /usr/local/bin/speak_date.sh
 sudo chmod 777 /usr/local/bin/speak_date.sh
 
 # Idempotent append cron job
-grep -Fxe '0 * * * * sh speak_date.sh' /etc/crontabs/root || {
-  sudo tee -a /etc/crontabs/root <<<"0 * * * * sh speak_date.sh"
+grep -Fxe '0 * * * * sh speak_time.sh' /etc/crontabs/root || {
+  sudo tee -a /etc/crontabs/root <<<"0 * * * * sh speak_time.sh"
 }
