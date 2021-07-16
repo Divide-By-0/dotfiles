@@ -1,1 +1,1 @@
-sh speak.sh "It is $(date +%I:%M)"
+sh /usr/local/bin/speak.sh "It is $(date +%I:%M)"
