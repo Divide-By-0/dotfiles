@@ -9,6 +9,14 @@ sudo chmod 777 /usr/local/bin/speak.sh
 sudo cp `pwd`/speak_date.sh /usr/local/bin/speak_date.sh
 sudo chmod 777 /usr/local/bin/speak_date.sh
 
+# Idempotent bash aliases
+if [ ! -f ~/.bash_aliases ]
+then
+    cp .bash_aliases ~/.bash_aliases
+else
+    echo "Bash aliases not copied over, file already exists."
+fi
+
 # Idempotent append cron job
 grep -Fxe 'speak_time.sh' /etc/crontabs/root || {
   sudo tee -a /etc/crontabs/root <<<"0 * * * * sh /usr/local/bin/speak_time.sh"
