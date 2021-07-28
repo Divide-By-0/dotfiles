@@ -30,4 +30,7 @@ call plug#begin('~/.config/nvim/autoload/plugged')
     Plug 'meck/vim-brittany'
     Plug 'neovimhaskell/haskell-vim'
     Plug 'kassio/neoterm'
+    " Vim for Chrome textboxes 
+    Plug 'glacambre/firenvim', { 'do': { _ -> firenvim#install(0) } }
+
 call plug#end()
