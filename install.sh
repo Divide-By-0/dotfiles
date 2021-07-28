@@ -23,4 +23,6 @@ grep -Fxe 'speak_time.sh' /etc/crontabs/root || {
 }
 
 # Ergodex EZ training shortcut
-sudo touch /etc/udev/rules.d/50-oryx.rules
+cp 50-oryx.rules /etc/udev/rules.d/50-oryx.rules
+sudo groupadd plugdev
+sudo usermod -aG plugdev $USER
