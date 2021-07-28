@@ -18,8 +18,8 @@ else
 fi
 
 # Idempotent append cron job
-grep -Fxe 'speak_time.sh' /etc/crontabs/root || {
-  sudo tee -a /etc/crontabs/root <<<"0 * * * * sh /usr/local/bin/speak_time.sh"
+grep -Fxe 'speak_time.sh' /etc/crontab || {
+  sudo tee -a /etc/crontab <<< "0 * * * * sh /usr/local/bin/speak_time.sh"
 }
 
 # Ergodex EZ training shortcut
