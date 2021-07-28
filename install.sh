@@ -21,3 +21,6 @@ fi
 grep -Fxe 'speak_time.sh' /etc/crontabs/root || {
   sudo tee -a /etc/crontabs/root <<<"0 * * * * sh /usr/local/bin/speak_time.sh"
 }
+
+# Ergodex EZ training shortcut
+sudo touch /etc/udev/rules.d/50-oryx.rules
