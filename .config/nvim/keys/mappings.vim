@@ -67,6 +67,9 @@ tnoremap <C-h> <C-\><C-n><C-w>h
 tnoremap <C-j> <C-\><C-n><C-w>j
 tnoremap <C-k> <C-\><C-n><C-w>k
 tnoremap <C-l> <C-\><C-n><C-w>l
+" buffer
+:nnoremap <Leader>q :BD<CR>
+
 " haskell repl stuff
 " Leader z opens a stack ghci on the right
 nnoremap <leader>z :vsplit <C-l> <bar> :T stack ghci<cr>

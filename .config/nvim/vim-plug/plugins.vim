@@ -30,4 +30,5 @@ call plug#begin('~/.config/nvim/autoload/plugged')
     Plug 'meck/vim-brittany'
     Plug 'neovimhaskell/haskell-vim'
     Plug 'kassio/neoterm'
+    Plug 'qpkorr/vim-bufkill'
 call plug#end()
