@@ -1,4 +1,4 @@
-syntax on
+
 set noerrorbells visualbell t_vb=
 
 set tabstop=4 softtabstop=4

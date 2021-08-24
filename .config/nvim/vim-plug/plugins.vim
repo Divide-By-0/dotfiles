@@ -17,6 +17,10 @@ call plug#begin('~/.config/nvim/autoload/plugged')
     Plug 'tpope/vim-fugitive'
     " Stable version of coc
     Plug 'neoclide/coc.nvim', {'branch': 'release'}
+                         
+    Plug 'easymotion/vim-easymotion'      
+    Plug 'preservim/nerdcommenter'                      
+    Plug 'preservim/nerdtree'  
     Plug 'vim-airline/vim-airline'
     Plug 'vim-airline/vim-airline-themes'
     Plug 'mhinz/vim-signify'
@@ -31,6 +35,6 @@ call plug#begin('~/.config/nvim/autoload/plugged')
     Plug 'neovimhaskell/haskell-vim'
     Plug 'kassio/neoterm'
     " Vim for Chrome textboxes 
-    Plug 'glacambre/firenvim', { 'do': { _ -> firenvim#install(0) } }
+    " Plug 'glacambre/firenvim', { 'do': { _ -> firenvim#install(0) } }
 
 call plug#end()
