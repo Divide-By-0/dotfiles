@@ -19,16 +19,23 @@ call plug#begin('~/.config/nvim/autoload/plugged')
     Plug 'neoclide/coc.nvim', {'branch': 'release'}
     Plug 'vim-airline/vim-airline'
     Plug 'vim-airline/vim-airline-themes'
+    " git diff
     Plug 'mhinz/vim-signify'
+    " snipe with s{char1}{char2}
     Plug 'justinmk/vim-sneak'
+    " highlight before jumping with f
     Plug 'unblevable/quick-scope'
+    " quick search
     Plug 'junegunn/fzf', { 'do': { -> fzf#install() } }
     Plug 'junegunn/fzf.vim'
     Plug 'airblade/vim-rooter'
     Plug 'fatih/vim-go', { 'do': ':GoUpdateBinaries' }
     Plug 'christoomey/vim-tmux-navigator'
     Plug 'meck/vim-brittany'
-    Plug 'neovimhaskell/haskell-vim'
+    " better haskell highlighting
+    Plug 'neovimhaskell/haskell-ovim'
+    " better terminal support in neovim
     Plug 'kassio/neoterm'
+    " :BD to kill a buffer befor
     Plug 'qpkorr/vim-bufkill'
 call plug#end()
