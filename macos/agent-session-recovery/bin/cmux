@@ -1,0 +1,45 @@
+#!/bin/sh
+
+# cmux can fail to resolve the calling surface for the positional restore
+# command it types into fresh shells during session restoration. Resolve and
+# verify the saved record explicitly, then use the working surface form. If
+# record lookup is unavailable, leave the command on the upstream path.
+
+real_cmux=${CMUX_REAL_BIN:-/Applications/cmux.app/Contents/Resources/bin/cmux}
+if [ ! -x "$real_cmux" ]; then
+    real_cmux=/opt/homebrew/bin/cmux
+fi
+
+if [ "$#" -eq 3 ] && [ "$1" = restore ] && [ -n "${CMUX_SURFACE_ID:-}" ]; then
+    restore_record=$(
+        "$real_cmux" --json surface resume get \
+            --surface "$CMUX_SURFACE_ID" 2>/dev/null
+    ) || exec "$real_cmux" "$@"
+
+    saved_kind=$(
+        printf '%s' "$restore_record" \
+            | /usr/bin/plutil -extract restore_record.kind raw -o - - \
+                2>/dev/null
+    )
+    saved_checkpoint=$(
+        printf '%s' "$restore_record" \
+            | /usr/bin/plutil \
+                -extract restore_record.checkpoint_id raw -o - - \
+                2>/dev/null
+    )
+
+    if [ -z "$saved_kind" ] || [ -z "$saved_checkpoint" ]; then
+        exec "$real_cmux" restore --surface "$CMUX_SURFACE_ID"
+    fi
+
+    if [ "$2" != "$saved_kind" ] || [ "$3" != "$saved_checkpoint" ]; then
+        printf '%s\n' \
+            "Error: restore: this command no longer matches the session. Run 'cmux restore --surface' to use the current record." \
+            >&2
+        exit 1
+    fi
+
+    exec "$real_cmux" restore --surface "$CMUX_SURFACE_ID"
+fi
+
+exec "$real_cmux" "$@"

@@ -1,0 +1,64 @@
+#!/bin/bash
+set -u
+
+TMUX_BIN="${TMUX_BIN:-/opt/homebrew/bin/tmux}"
+STATE_DIR="${HOME}/.claude/hooks/moshi-cmux-binds"
+
+json_value() {
+  /usr/bin/plutil -extract "$2" raw -o - "$1" 2>/dev/null || true
+}
+
+describe_session() {
+  session="$1"
+  pane="$("$TMUX_BIN" list-panes -t "${session}:" -F "#{pane_id}" 2>/dev/null | head -1)"
+  command="$("$TMUX_BIN" list-panes -t "${session}:" -F "#{pane_current_command}" 2>/dev/null | head -1)"
+  cwd="$("$TMUX_BIN" list-panes -t "${session}:" -F "#{pane_current_path}" 2>/dev/null | head -1)"
+  kind="ordinary tmux session"
+  detail="cwd=$cwd command=$command pane=$pane"
+
+  if [ -d "$STATE_DIR" ]; then
+    for state in "$STATE_DIR"/*.json; do
+      [ -e "$state" ] || continue
+      saved_name="$(json_value "$state" tmux_session)"
+      surface_id="$(json_value "$state" surface_id)"
+      surface_key="$(printf "%s" "$surface_id" | tr "[:upper:]" "[:lower:]" | tr -cd "a-f0-9" | cut -c1-6)"
+      case "$session" in
+        "$saved_name"|*-"$surface_key"|*-"$surface_key"-x)
+          [ -n "$surface_key" ] || continue
+          title="$(json_value "$state" title)"
+          agent_cwd="$(json_value "$state" cwd)"
+          checkpoint="$(json_value "$state" session_id)"
+          state_label="live ghost mirror"
+          case "$command" in
+            secretty|zsh|bash|sh) state_label="restored stale ghost shell" ;;
+          esac
+          kind="Moshi/cmux mirror"
+          detail="title=$title surface=${surface_id:0:8} checkpoint=$checkpoint cwd=$agent_cwd state=$state_label pane=$pane"
+          break
+          ;;
+      esac
+    done
+  fi
+
+  printf "%-34s  %-20s  %s\n" "$session" "$kind" "$detail"
+}
+
+if ! "$TMUX_BIN" has-session >/dev/null 2>&1; then
+  echo "No default tmux server is running." >&2
+  exit 1
+fi
+
+printf "%-34s  %-20s  %s\n" "SESSION" "CLASS" "DETAILS"
+if [ "$#" -gt 0 ]; then
+  for session in "$@"; do
+    if "$TMUX_BIN" has-session -t "${session}:" 2>/dev/null; then
+      describe_session "$session"
+    else
+      printf "%-34s  %-20s  %s\n" "$session" "missing" "not present on the default tmux server"
+    fi
+  done
+else
+  while IFS= read -r session; do
+    describe_session "$session"
+  done < <("$TMUX_BIN" list-sessions -F "#{session_name}" | sort)
+fi

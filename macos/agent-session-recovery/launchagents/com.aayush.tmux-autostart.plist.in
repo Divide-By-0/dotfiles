@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Start the default tmux server, synchronously restore the latest
+	     tmux-resurrect snapshot, and fail if fewer panes return than the snapshot
+	     contains. This owns boot restore; tmux-continuum auto-restore stays off. -->
+	<key>Label</key>
+	<string>com.aayush.tmux-autostart</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__HOME__/.local/bin/tmux-autostart-restore.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- REASON: launchd starts processes with cwd=/ by default, so the tmux SERVER
+	     was starting in / and every new session/window without an explicit -c
+	     inherited / as its working directory. Pinning WorkingDirectory to $HOME
+	     makes the server start in ~, so the default dir for new sessions is ~ not /.
+	     Only takes effect on a cold server start (login/reboot); an already-running
+	     server keeps its original cwd. -->
+	<key>WorkingDirectory</key>
+	<string>__HOME__</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<!-- REASON: tmux needs PATH to include homebrew so it can find the
+		     shell and plugins. LaunchAgents get a minimal environment by default. -->
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>__HOME__</string>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/tmp/tmux-autostart.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/tmux-autostart.err</string>
+</dict>
+</plist>
