@@ -104,9 +104,11 @@ case "$kind" in
 		# -c overrides below are the equivalent; resume does honour -c.
 		if [ "$sid" = "-" ]; then
 			exec "$CODEX" resume --last \
+				-c tui.resume_cwd=current \
 				-c sandbox_mode=danger-full-access -c approval_policy=never
 		fi
 		exec "$CODEX" resume "$sid" \
+			-c tui.resume_cwd=current \
 			-c sandbox_mode=danger-full-access -c approval_policy=never
 		;;
 	*)

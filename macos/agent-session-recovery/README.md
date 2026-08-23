@@ -8,17 +8,19 @@ This directory is the source of truth for the local cmux, tmux, Claude, Codex, M
 - A login-time empty tmux server previously relied on tmux-continuum to restore in the background while the daily saver also ran at load. The save could win the race and replace `last` with an almost-empty snapshot. The LaunchAgent now runs one synchronous restore, checks the expected pane count, and logs a failure if the restore is incomplete. The daily saver runs only at 03:17 and keeps paired state/content archives.
 - tmux 3.7 parses dots in bare targets such as `.projects.nosync` and `lxm.house` as pane separators. The tracked tmux-resurrect patch uses explicit `session:` targets so later windows are not silently dropped.
 - Every restored Claude and Codex pane receives its own saved checkpoint ID. This prevents several panes in one directory from racing into the same most-recent conversation.
+- Saved pane directories are taken from the live agent process tree, and Codex is resumed with `tui.resume_cwd=current`, so the checkpoint starts in the exact directory tmux restored rather than prompting or silently choosing another folder.
 - Claude startup trust and large-session summary prompts are accepted only in panes being relaunched from an already saved checkpoint.
 
 ## Generated tmux names
 
-Moshi needs a tmux pane through which it can mirror a cmux terminal. `moshi-cmux-title.py` names that helper session as:
+Moshi needs a tmux pane through which it can mirror a cmux terminal. These helper sessions use the human tab title plus the agent directory basename:
 
 ```text
-<sanitized cmux tab title>-<first 6 hex characters of the cmux surface id>
+moshi-<task>-<folder>
+stale-moshi-<task>-<folder>
 ```
 
-For example, `claude-task-a6c6a8` is a Moshi mirror for surface `A6C6A8...`, not a project name. A trailing `-x` is added when the desired name is already taken. These helpers are intentionally saved by tmux-resurrect; if their keeper process was already dead when the snapshot was made, they return as harmless stale shells.
+For example, an active helper may be `moshi-claude-task-quests`; after its keeper exits or it returns from a reboot without a live mirror, it becomes `stale-moshi-claude-task-quests`. Opaque cmux surface IDs are never used in new names. Name collisions use readable numeric suffixes such as `-2`. `reconcile-moshi-sessions.py` runs at restore completion and on Moshi session end, and only renames helpers—it does not kill or delete them.
 
 Use the doctor to distinguish mirrors from ordinary sessions:
 
@@ -26,10 +28,18 @@ Use the doctor to distinguish mirrors from ordinary sessions:
 ~/.local/bin/agent-session-doctor c20e58d9-c20e58 c20e58d9-c20e58-x cadgenbench
 ```
 
+Verify every saved Claude/Codex pane against both its live process cwd and its checkpoint metadata:
+
+```sh
+~/.local/bin/agent-session-doctor --verify-cwds
+```
+
+A clean result ends with `mismatches=0`.
+
 ## Layout
 
 - `bin/`: cmux compatibility shim, validated startup restore, daily saver, and session doctor.
-- `tmux/`: per-pane agent resume, save/restore hooks, real-cwd resolution, and descriptive window naming.
+- `tmux/`: per-pane agent resume, save/restore hooks, real-cwd resolution, descriptive window naming, and Moshi helper reconciliation.
 - `claude-hooks/`: active cmux-aware Moshi bridge and the Claude pane/checkpoint registry.
 - `config/`: snippets sourced by `.tmux.conf` and `.zshrc`.
 - `launchagents/`: templates rendered with the current home directory.

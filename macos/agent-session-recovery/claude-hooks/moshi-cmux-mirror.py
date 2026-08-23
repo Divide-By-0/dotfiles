@@ -341,7 +341,6 @@ def refresh_names(state: dict, state_path: Path) -> None:
     if not surface_id:
         return
     title_py = Path.home() / ".claude/hooks/moshi-cmux-title.py"
-    surf_key = "".join(ch for ch in surface_id.lower() if ch in "0123456789abcdef")[:12]
     try:
         title = subprocess.check_output(
             [sys.executable, str(title_py), "--title", surface_id],
@@ -350,7 +349,14 @@ def refresh_names(state: dict, state_path: Path) -> None:
             stderr=subprocess.DEVNULL,
         ).strip() or (state.get("title") or "cmux")
         desired = subprocess.check_output(
-            [sys.executable, str(title_py), "--session-name", surface_id, surf_key],
+            [
+                sys.executable,
+                str(title_py),
+                "--format-session",
+                title,
+                state.get("cwd") or "",
+                "stale" if state.get("stale") is True else "active",
+            ],
             text=True,
             timeout=3,
             stderr=subprocess.DEVNULL,
@@ -365,13 +371,16 @@ def refresh_names(state: dict, state_path: Path) -> None:
     ).strip()
     if desired and current and desired != current:
         # Avoid clobbering an unrelated session that already owns the name.
-        exists = subprocess.run(
-            ["tmux", "has-session", "-t", desired],
+        target = desired
+        index = 2
+        while target != current and subprocess.run(
+            ["tmux", "has-session", "-t", f"{target}:"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
-        ).returncode == 0
-        target = f"{desired}-x" if exists else desired
+        ).returncode == 0:
+            target = f"{desired}-{index}"
+            index += 1
         renamed = subprocess.run(
             ["tmux", "rename-session", "-t", current, target],
             stdout=subprocess.DEVNULL,

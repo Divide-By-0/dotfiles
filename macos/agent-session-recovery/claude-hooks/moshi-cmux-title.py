@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve a human cmux surface title, and sanitize it for tmux session names."""
+"""Resolve human cmux titles and stable, readable Moshi tmux names."""
 from __future__ import annotations
 
 import json
@@ -91,44 +91,62 @@ def resolve_title(surface_id: str, previous: str = "") -> str:
     return sid[:8] or "cmux"
 
 
-def sanitize_session_name(title: str, surf_key: str) -> str:
-    """tmux-safe session name derived from the tab title.
-
-    Keeps a short surface suffix so renames stay unique across similarly named tabs.
-    """
-    text = unicodedata.normalize("NFKD", title or "")
+def _slug(value: str) -> str:
+    text = unicodedata.normalize("NFKD", value or "")
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    # Drop leading status glyphs / punctuation.
     text = re.sub(r"^[^\w]+", "", text, flags=re.UNICODE)
     text = re.sub(r"[^\w\s\-]+", "", text, flags=re.UNICODE)
     text = re.sub(r"[\s_]+", "-", text.strip())
     text = re.sub(r"-{2,}", "-", text).strip("-").lower()
-    if not text or text in {"cmux", "terminal", "untitled"}:
-        text = "tab"
-    text = text[:36].rstrip("-")
-    suffix = re.sub(r"[^a-f0-9]", "", (surf_key or "").lower())[:6]
-    if suffix:
-        return f"{text}-{suffix}"
     return text
+
+
+def format_session_name(title: str, cwd: str, stale: bool = False) -> str:
+    """Build a tmux-safe name without leaking opaque cmux surface IDs.
+
+    The title says what the agent is doing and the directory basename says where.
+    Collisions are resolved by the caller with numeric suffixes.
+    """
+    title_slug = _slug(title)
+    cwd_slug = _slug(_basename(cwd)) if cwd else ""
+    generic = {
+        "",
+        "cmux",
+        "tab",
+        "terminal",
+        "untitled",
+    }
+    if title_slug in generic or re.fullmatch(r"[0-9a-f]{8,}", title_slug):
+        title_slug = "claude"
+    if cwd_slug in {"", ".", "claude"} or cwd_slug == title_slug:
+        descriptive = title_slug
+    else:
+        descriptive = f"{title_slug}-{cwd_slug}"
+    prefix = "stale-moshi" if stale else "moshi"
+    return f"{prefix}-{descriptive}"[:63].rstrip("-")
 
 
 def main() -> int:
     mode = "title"
     args = sys.argv[1:]
+    if args and args[0] == "--format-session":
+        title = args[1] if len(args) > 1 else ""
+        cwd = args[2] if len(args) > 2 else ""
+        state = args[3] if len(args) > 3 else "active"
+        print(format_session_name(title, cwd, stale=(state == "stale")))
+        return 0
     if args and args[0] in {"--session-name", "--title"}:
         mode = "session" if args[0] == "--session-name" else "title"
         args = args[1:]
     sid = (args[0] if args else "").strip()
-    surf_key = (args[1] if len(args) > 1 else "").strip()
+    cwd = (args[1] if len(args) > 1 else "").strip()
     previous = ""
     # Optional: previous title from state for better fallback ranking.
     if len(args) > 2:
         previous = args[2]
     title = resolve_title(sid, previous=previous)
     if mode == "session":
-        if not surf_key:
-            surf_key = re.sub(r"[^a-f0-9]", "", sid.lower())[:12]
-        print(sanitize_session_name(title, surf_key))
+        print(format_session_name(title, cwd))
     else:
         print(title)
     return 0

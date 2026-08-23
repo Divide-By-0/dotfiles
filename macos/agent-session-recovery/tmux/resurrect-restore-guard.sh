@@ -26,6 +26,7 @@ set -u
 
 FLAG='@resurrect-restore-in-progress'
 REAL_CWD="${HOME}/.tmux/real-cwd.sh"
+MOSHI_RECONCILER="${HOME}/.tmux/reconcile-moshi-sessions.py"
 
 case "${1:-}" in
 	pre)
@@ -36,12 +37,18 @@ case "${1:-}" in
 		;;
 	post)
 		tmux set-option -gu "$FLAG" 2>/dev/null
+		# Restored Moshi helpers may no longer have a keeper. Label them before
+		# ordinary cwd-based session naming can obscure what they are.
+		[ -f "$MOSHI_RECONCILER" ] && python3 "$MOSHI_RECONCILER" --quiet 2>/dev/null || true
 
 		# Reconcile session names the same way the zshrc precmd hook would have,
 		# but after the fact and from one place. Panes that successfully relaunched
 		# an agent never draw another shell prompt, so without this their sessions
 		# would keep whatever name the save file had.
 		tmux list-sessions -F '#{session_name}' 2>/dev/null | while IFS= read -r s; do
+			case "$s" in
+				moshi-*|stale-moshi-*) continue ;;
+			esac
 			# A trailing colon keeps tmux 3.7 from parsing dots in a session name as
 			# pane separators (for example .projects.nosync and lxm.house).
 			pane_pid="$(tmux list-panes -t "${s}:" -F '#{pane_pid}' 2>/dev/null | head -1)"
@@ -54,6 +61,7 @@ case "${1:-}" in
 			# is normal here (several sessions legitimately sit in the same directory).
 			tmux rename-session -t "${s}:" "${dir##*/}" 2>/dev/null || true
 		done
+		[ -f "$MOSHI_RECONCILER" ] && python3 "$MOSHI_RECONCILER" --quiet 2>/dev/null || true
 		;;
 	*)
 		echo "usage: $0 pre|post" >&2

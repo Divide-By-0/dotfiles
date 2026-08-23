@@ -29,7 +29,7 @@ for name in cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh agent-se
   backup_and_link "$ROOT/bin/$name" "$HOME/.local/bin/$name"
 done
 
-for name in tmux-resume-pane.sh resurrect-restore-guard.sh resurrect-secretty-fix.sh real-cwd.sh agent-window-name.sh; do
+for name in tmux-resume-pane.sh resurrect-restore-guard.sh resurrect-secretty-fix.sh real-cwd.sh agent-window-name.sh reconcile-moshi-sessions.py; do
   backup_and_link "$ROOT/tmux/$name" "$HOME/.tmux/$name"
 done
 

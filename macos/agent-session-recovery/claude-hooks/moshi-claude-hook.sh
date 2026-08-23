@@ -11,6 +11,7 @@ LOG="${HOME}/.claude/hooks/moshi-sessionstart.log"
 MOSHI="${MOSHI_BIN:-/opt/homebrew/bin/moshi}"
 KEEPER="${HOME}/.claude/hooks/moshi-ghost-keeper.sh"
 TITLE_PY="${HOME}/.claude/hooks/moshi-cmux-title.py"
+RECONCILER="${HOME}/.tmux/reconcile-moshi-sessions.py"
 STATE_DIR="${HOME}/.claude/hooks/moshi-cmux-binds"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
@@ -70,13 +71,13 @@ start_script="${STATE_DIR}/${surf_key}.start.sh"
 mkdir -p "$queue_dir" 2>/dev/null || true
 
 title="cmux"
-desired_session="tab-${surf_key}"
+desired_session="moshi-claude"
 if [ -f "$TITLE_PY" ]; then
   title=$(python3 "$TITLE_PY" --title "$surface_id" 2>/dev/null || echo cmux)
-  desired_session=$(python3 "$TITLE_PY" --session-name "$surface_id" "$surf_key" 2>/dev/null || echo "tab-${surf_key}")
+  desired_session=$(python3 "$TITLE_PY" --session-name "$surface_id" "$cwd" "$title" 2>/dev/null || echo "moshi-claude")
 fi
 [ -n "$title" ] || title="cmux"
-[ -n "$desired_session" ] || desired_session="tab-${surf_key}"
+[ -n "$desired_session" ] || desired_session="moshi-claude"
 
 # Resolve which tmux session already backs this surface (legacy hex name or prior title).
 legacy_session="moshi-cmux-${surf_key}"
@@ -93,12 +94,21 @@ if ! tmux has-session -t "$tmux_session" 2>/dev/null; then
   fi
 fi
 
-# Rename legacy/outdated session names to the human tab title Moshi shows.
+# Rename legacy/outdated session names to the human task/folder name Moshi shows.
+unique_session_name() {
+  base="$1"
+  current="$2"
+  candidate="$base"
+  index=2
+  while [ "$candidate" != "$current" ] && tmux has-session -t "${candidate}:" 2>/dev/null; do
+    candidate="${base}-${index}"
+    index=$((index + 1))
+  done
+  printf '%s\n' "$candidate"
+}
+
 if [ "$tmux_session" != "$desired_session" ] && tmux has-session -t "$tmux_session" 2>/dev/null; then
-  if tmux has-session -t "$desired_session" 2>/dev/null; then
-    # Collision: keep unique desired name with an extra suffix.
-    desired_session="${desired_session}-x"
-  fi
+  desired_session=$(unique_session_name "$desired_session" "$tmux_session")
   if tmux rename-session -t "$tmux_session" "$desired_session" 2>>"$LOG"; then
     log "renamed tmux session $tmux_session -> $desired_session title=$title"
     tmux_session="$desired_session"
@@ -106,10 +116,10 @@ if [ "$tmux_session" != "$desired_session" ] && tmux has-session -t "$tmux_sessi
 fi
 
 # Persist surface metadata for the long-lived keeper (no respawn needed).
-python3 - "$state_file" "$session_id" "$cwd" "$surface_id" "$workspace_id" "$title" "$tmux_session" <<'PY'
+python3 - "$state_file" "$session_id" "$cwd" "$surface_id" "$workspace_id" "$title" "$tmux_session" "$event" <<'PY'
 import json, sys
 from pathlib import Path
-path, session_id, cwd, surface_id, workspace_id, title, tmux_session = sys.argv[1:8]
+path, session_id, cwd, surface_id, workspace_id, title, tmux_session, event = sys.argv[1:9]
 Path(path).write_text(json.dumps({
     "session_id": session_id,
     "cwd": cwd,
@@ -117,8 +127,15 @@ Path(path).write_text(json.dumps({
     "workspace_id": workspace_id,
     "title": title,
     "tmux_session": tmux_session,
+    "stale": event == "SessionEnd",
 }, indent=2) + "\n")
 PY
+
+reconcile_after_event() {
+  if [ "$event" = "SessionEnd" ] && [ -f "$RECONCILER" ]; then
+    python3 "$RECONCILER" --quiet >>"$LOG" 2>&1 || true
+  fi
+}
 
 # Window name is what tmux status / some clients show; keep it human.
 win_name=$(printf '%s' "$title" | tr -cd '[:alnum:][:space:]\-_' | cut -c1-40)
@@ -212,6 +229,7 @@ while [ "$i" -lt $((timeout_s * 4)) ]; do
     fi
     rm -f "$donef" "$outf" 2>/dev/null || true
     log "cmux queued hook ok event=$event session=$session_id tmux=$tmux_session ec=${ec:-0}"
+    reconcile_after_event
     exit 0
   fi
   i=$((i + 1))
@@ -225,4 +243,5 @@ fi
 
 # Lifecycle: request is still queued/processing; keeper will finish it.
 log "cmux queued hook detached event=$event session=$session_id tmux=$tmux_session"
+reconcile_after_event
 exit 0

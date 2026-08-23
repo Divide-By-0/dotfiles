@@ -6,6 +6,7 @@ export PATH="${SESSION_RESTORE_PATH:-/opt/homebrew/bin:/opt/homebrew/sbin:/usr/l
 
 TMUX_BIN="${TMUX_BIN:-/opt/homebrew/bin/tmux}"
 RESTORE_SCRIPT="$HOME/.tmux/plugins/tmux-resurrect/scripts/restore.sh"
+MOSHI_RECONCILER="$HOME/.tmux/reconcile-moshi-sessions.py"
 RESURRECT_DIR="$HOME/.tmux/resurrect"
 BOOTSTRAP_SESSION="autostart"
 
@@ -67,6 +68,8 @@ if ! "$RESTORE_SCRIPT"; then
   log "tmux-resurrect returned a failure"
   exit 1
 fi
+
+[ -f "$MOSHI_RECONCILER" ] && python3 "$MOSHI_RECONCILER" --quiet 2>/dev/null || true
 
 after_panes="$(count_live_panes)"
 if [ "$after_panes" -lt "$expected_panes" ]; then
