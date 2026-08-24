@@ -94,6 +94,25 @@ if [ -x /opt/homebrew/bin/tmux ]; then
   count="$(/opt/homebrew/bin/tmux -L "$TMUX_TEST_SOCKET" list-windows -t ".projects.nosync:" -F "#{window_index}" | wc -l | tr -d " ")"
   [ "$count" -eq 2 ]
 
+  if [ -d "$plugin_root/scripts" ]; then
+    /opt/homebrew/bin/tmux -L "$TMUX_TEST_SOCKET" source-file "$ROOT/config/tmux-session-recovery.conf"
+    tmux_env="$(/opt/homebrew/bin/tmux -L "$TMUX_TEST_SOCKET" display-message -p '#{socket_path},#{pid},0')"
+    shell_strategy="$(TMUX="$tmux_env" CURRENT_DIR="$plugin_root/scripts" bash -c '
+      source "$CURRENT_DIR/variables.sh"
+      source "$CURRENT_DIR/helpers.sh"
+      source "$CURRENT_DIR/process_restore_helpers.sh"
+      _get_inline_strategy "/bin/zsh -l -i"
+    ')"
+    [ "$shell_strategy" = ":" ]
+    unsupported_strategy="$(TMUX="$tmux_env" CURRENT_DIR="$plugin_root/scripts" bash -c '
+      source "$CURRENT_DIR/variables.sh"
+      source "$CURRENT_DIR/helpers.sh"
+      source "$CURRENT_DIR/process_restore_helpers.sh"
+      _get_inline_strategy "/usr/local/bin/custom-server --serve"
+    ')"
+    [ -z "$unsupported_strategy" ]
+  fi
+
   title_py="$ROOT/claude-hooks/moshi-cmux-title.py"
   [ "$(python3 "$title_py" --format-session "claude task" "/tmp/quests" active)" = "moshi-claude-task-quests" ]
   [ "$(python3 "$title_py" --format-session "claude task" "/tmp/quests" stale)" = "stale-moshi-claude-task-quests" ]
