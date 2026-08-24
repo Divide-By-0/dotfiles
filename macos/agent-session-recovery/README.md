@@ -10,7 +10,7 @@ This directory is the source of truth for the local cmux, tmux, Claude, Codex, M
 - Every restored Claude and Codex pane receives its own saved checkpoint ID. This prevents several panes in one directory from racing into the same most-recent conversation.
 - Saved pane directories are taken from the live agent process tree, and Codex is resumed with `tui.resume_cwd=current`, so the checkpoint starts in the exact directory tmux restored rather than prompting or silently choosing another folder.
 - Claude startup trust and large-session summary prompts are accepted only in panes being relaunched from an already saved checkpoint.
-- Plain login-shell panes are already recreated by tmux and use an explicit no-op restore strategy, avoiding the misleading `Previous command (not auto-restored)` warning. Unsupported non-shell commands remain fail-closed and visibly annotated.
+- Plain login-shell rows remain outside the auto-restore allowlist. Their visible `Previous command (not auto-restored)` annotation is intentional: it preserves evidence when a pre-reboot agent was accidentally saved as its outer login shell instead of silently treating that pane as successfully recovered.
 
 ## Generated tmux names
 
