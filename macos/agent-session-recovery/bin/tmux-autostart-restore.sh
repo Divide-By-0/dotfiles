@@ -9,6 +9,9 @@ RESTORE_SCRIPT="$HOME/.tmux/plugins/tmux-resurrect/scripts/restore.sh"
 MOSHI_RECONCILER="$HOME/.tmux/reconcile-moshi-sessions.py"
 RESURRECT_DIR="$HOME/.tmux/resurrect"
 BOOTSTRAP_SESSION="autostart"
+RESTORE_STATE_OPTION="@agent-session-boot-restore-state"
+restore_state_claimed=0
+server_pid=""
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -20,6 +23,18 @@ count_snapshot_panes() {
 
 count_live_panes() {
   "$TMUX_BIN" list-panes -a -F '#{pane_id}' 2>/dev/null | wc -l | tr -d ' '
+}
+
+finish_restore_state() {
+  status=$?
+  if [ "$restore_state_claimed" -eq 1 ] && [ -n "$server_pid" ]; then
+    if [ "$status" -eq 0 ]; then
+      "$TMUX_BIN" set-option -g "$RESTORE_STATE_OPTION" "$server_pid:complete" 2>/dev/null || true
+    else
+      "$TMUX_BIN" set-option -g "$RESTORE_STATE_OPTION" "$server_pid:failed" 2>/dev/null || true
+    fi
+  fi
+  exit "$status"
 }
 
 if [ ! -x "$TMUX_BIN" ]; then
@@ -55,6 +70,32 @@ if [ -z "$socket_path" ] || ! printf '%s' "$server_pid" | grep -Eq '^[0-9]+$'; t
   log "could not identify the default tmux server"
   exit 1
 fi
+
+# RunAtLoad can be triggered again when the LaunchAgent is reinstalled. Restoring
+# the same snapshot into an already restored server duplicates windows and sends
+# the same per-pane Codex resume command twice. Keep the one-shot marker inside
+# the tmux server so it disappears naturally when that server exits.
+restore_state="$("$TMUX_BIN" show-option -gv "$RESTORE_STATE_OPTION" 2>/dev/null || true)"
+case "$restore_state" in
+  "$server_pid:complete")
+    log "restore already complete for tmux server pid=$server_pid; skipping duplicate invocation"
+    exit 0
+    ;;
+  "$server_pid:in-progress:"*)
+    restore_owner="${restore_state##*:}"
+    if printf '%s' "$restore_owner" | grep -Eq '^[0-9]+$' && kill -0 "$restore_owner" 2>/dev/null; then
+      log "restore already in progress for tmux server pid=$server_pid owner=$restore_owner; skipping duplicate invocation"
+      exit 0
+    fi
+    ;;
+esac
+
+"$TMUX_BIN" set-option -g "$RESTORE_STATE_OPTION" "$server_pid:in-progress:$$"
+restore_state_claimed=1
+trap finish_restore_state EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # tmux-resurrect assumes TMUX is present even when invoked outside an attached
 # client. LaunchAgent processes do not inherit it, so construct the canonical

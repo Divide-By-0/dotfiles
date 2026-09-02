@@ -5,7 +5,8 @@ This directory is the source of truth for the local cmux, tmux, Claude, Codex, M
 ## What it fixes
 
 - cmux 0.64.x can type `cmux restore <agent> <checkpoint>` into the correct terminal and still reject it because the server cannot infer the current surface. `bin/cmux` verifies that the typed agent/checkpoint still matches the surface restore record, then uses the working `restore --surface` form.
-- A login-time empty tmux server previously relied on tmux-continuum to restore in the background while the daily saver also ran at load. The save could win the race and replace `last` with an almost-empty snapshot. The LaunchAgent now runs one synchronous restore, checks the expected pane count, and logs a failure if the restore is incomplete. The daily saver runs only at 03:17 and keeps paired state/content archives.
+- A login-time empty tmux server previously relied on tmux-continuum to restore in the background while the daily saver also ran at load. The save could win the race and replace `last` with an almost-empty snapshot. The LaunchAgent now runs one synchronous restore, marks that tmux server as restored so LaunchAgent reloads cannot restore it twice, checks the expected pane count, and logs a failure if the restore is incomplete.
+- A separate LaunchAgent saves every 15 minutes without relying on tmux-continuum's `status-right` interpolation, which terminal clients can erase. The 03:17 job still keeps paired daily state/content archives, and a shared lock prevents the periodic and daily jobs from overlapping.
 - tmux 3.7 parses dots in bare targets such as `.projects.nosync` and `lxm.house` as pane separators. The tracked tmux-resurrect patch uses explicit `session:` targets so later windows are not silently dropped.
 - Every restored Claude and Codex pane receives its own saved checkpoint ID. This prevents several panes in one directory from racing into the same most-recent conversation.
 - Saved pane directories are taken from the live agent process tree, and Codex is resumed with `tui.resume_cwd=current`, so the checkpoint starts in the exact directory tmux restored rather than prompting or silently choosing another folder.
@@ -39,7 +40,7 @@ A clean result ends with `mismatches=0`.
 
 ## Layout
 
-- `bin/`: cmux compatibility shim, validated startup restore, daily saver, and session doctor.
+- `bin/`: cmux compatibility shim, validated startup restore, periodic/daily savers, and session doctor.
 - `tmux/`: per-pane agent resume, save/restore hooks, real-cwd resolution, descriptive window naming, and Moshi helper reconciliation.
 - `claude-hooks/`: active cmux-aware Moshi bridge and the Claude pane/checkpoint registry.
 - `config/`: snippets sourced by `.tmux.conf` and `.zshrc`.
@@ -62,11 +63,12 @@ cd macos/agent-session-recovery
 tmux source-file ~/.tmux.conf
 ```
 
-The installer backs up a differing installed file before replacing it, symlinks executable sources, applies the tmux-resurrect patch only when it applies cleanly, adds source lines to `.tmux.conf` and `.zshrc`, renders both LaunchAgents, and optionally reloads them. It never kills the running tmux server.
+The installer backs up a differing installed file before replacing it, symlinks executable sources, applies the tmux-resurrect patch only when it applies cleanly, adds source lines to `.tmux.conf` and `.zshrc`, renders all three LaunchAgents, and optionally reloads them. It never kills the running tmux server. Reloading the startup agent is safe: an already restored tmux server is marked and skipped.
 
 Logs:
 
 - `/tmp/tmux-autostart.log` and `/tmp/tmux-autostart.err`
+- `~/Library/Logs/tmux-periodic-resurrect-save.log`
 - `~/Library/Logs/tmux-daily-resurrect-save.log`
 - `~/.claude/hooks/moshi-sessionstart.log`
 

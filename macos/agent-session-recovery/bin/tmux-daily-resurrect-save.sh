@@ -9,9 +9,60 @@ SAVE_SCRIPT="$HOME/.tmux/plugins/tmux-resurrect/scripts/save.sh"
 RESURRECT_DIR="$HOME/.tmux/resurrect"
 ARCHIVE_DIR="$RESURRECT_DIR/daily"
 KEEP="${TMUX_DAILY_RESURRECT_KEEP:-14}"
+LOCK_DIR="$RESURRECT_DIR/.resurrect-save.lock"
+archive=1
+
+case "${1:-}" in
+  "") ;;
+  --checkpoint-only) archive=0 ;;
+  *)
+    echo "usage: $0 [--checkpoint-only]" >&2
+    exit 2
+    ;;
+esac
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+}
+
+release_lock() {
+  rm -f "$LOCK_DIR/pid"
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+acquire_lock() {
+  mkdir -p "$RESURRECT_DIR"
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    printf '%s\n' "$$" >"$LOCK_DIR/pid"
+    trap release_lock EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    return 0
+  fi
+
+  lock_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  lock_command=""
+  if printf '%s' "$lock_pid" | grep -Eq '^[0-9]+$' && kill -0 "$lock_pid" 2>/dev/null; then
+    lock_command="$(ps -p "$lock_pid" -o command= 2>/dev/null || true)"
+  fi
+  case "$lock_command" in
+    *tmux-daily-resurrect-save.sh*|*tmux-periodic-resurrect-save.sh*)
+      log "another tmux-resurrect save is already running pid=$lock_pid; skipping"
+      return 1
+      ;;
+  esac
+
+  rm -f "$LOCK_DIR/pid"
+  if ! rmdir "$LOCK_DIR" 2>/dev/null || ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    log "could not recover stale save lock: $LOCK_DIR"
+    return 1
+  fi
+  printf '%s\n' "$$" >"$LOCK_DIR/pid"
+  trap release_lock EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 }
 
 if [ ! -x "$TMUX_BIN" ]; then
@@ -29,6 +80,7 @@ if ! "$TMUX_BIN" has-session >/dev/null 2>&1; then
   exit 0
 fi
 
+acquire_lock || exit 0
 mkdir -p "$ARCHIVE_DIR"
 
 if [ -z "${TMUX:-}" ]; then
@@ -77,6 +129,13 @@ if [ "$pane_count" -eq 0 ] || [ "$window_count" -eq 0 ]; then
     log "restored previous last symlink: $previous_target"
   fi
   exit 1
+fi
+
+"$TMUX_BIN" set-option -g @agent-session-save-last-timestamp "$(date +%s)" 2>/dev/null || true
+
+if [ "$archive" -eq 0 ]; then
+  log "checkpoint complete: panes=$pane_count windows=$window_count file=$last_file"
+  exit 0
 fi
 
 stamp="$(date '+%Y%m%dT%H%M%S')"

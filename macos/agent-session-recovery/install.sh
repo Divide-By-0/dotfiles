@@ -25,7 +25,7 @@ backup_and_link() {
   echo "linked $dst -> $src"
 }
 
-for name in cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh agent-session-doctor; do
+for name in cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh tmux-periodic-resurrect-save.sh agent-session-doctor; do
   backup_and_link "$ROOT/bin/$name" "$HOME/.local/bin/$name"
 done
 
@@ -95,10 +95,28 @@ ensure_zsh_source
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 render_plist "$ROOT/launchagents/com.aayush.tmux-autostart.plist.in" "$HOME/Library/LaunchAgents/com.aayush.tmux-autostart.plist"
 render_plist "$ROOT/launchagents/com.aayush.tmux-daily-resurrect-save.plist.in" "$HOME/Library/LaunchAgents/com.aayush.tmux-daily-resurrect-save.plist"
+render_plist "$ROOT/launchagents/com.aayush.tmux-periodic-resurrect-save.plist.in" "$HOME/Library/LaunchAgents/com.aayush.tmux-periodic-resurrect-save.plist"
 
 if [ "${1:-}" = "--activate" ]; then
   domain="gui/$(id -u)"
-  for label in com.aayush.tmux-autostart com.aayush.tmux-daily-resurrect-save; do
+  for label in com.aayush.tmux-autostart com.aayush.tmux-daily-resurrect-save com.aayush.tmux-periodic-resurrect-save; do
+    if [ "$label" = "com.aayush.tmux-autostart" ] && launchctl print "$domain/$label" >/dev/null 2>&1; then
+      # Reloading a RunAtLoad restore job while tmux is live would restore the
+      # same snapshot into the current server. The scripts are symlinked, so the
+      # loaded job will use this version on the next login without a reload.
+      if command -v tmux >/dev/null 2>&1 && tmux has-session >/dev/null 2>&1; then
+        server_pid=$(tmux display-message -p '#{pid}')
+        tmux set-option -g @agent-session-boot-restore-state "$server_pid:complete"
+      fi
+      echo "left active $label loaded; current tmux server marked restored"
+      continue
+    fi
+    if [ "$label" = "com.aayush.tmux-autostart" ] && command -v tmux >/dev/null 2>&1 && tmux has-session >/dev/null 2>&1; then
+      # A first install into an already-running tmux server should preserve that
+      # live state, not merge a historical snapshot into it.
+      server_pid=$(tmux display-message -p '#{pid}')
+      tmux set-option -g @agent-session-boot-restore-state "$server_pid:complete"
+    fi
     launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
     launchctl bootstrap "$domain" "$HOME/Library/LaunchAgents/$label.plist"
   done

@@ -35,6 +35,14 @@ for template in "$ROOT"/launchagents/*.plist.in; do
   plutil -lint "$rendered" >/dev/null
 done
 
+periodic_plist="$TMP_ROOT/com.aayush.tmux-periodic-resurrect-save.plist"
+[ "$(plutil -extract StartInterval raw -o - "$periodic_plist")" = "900" ]
+if plutil -extract RunAtLoad raw -o - "$periodic_plist" >/dev/null 2>&1; then
+  echo "periodic saver must not run at load and race boot restore" >&2
+  exit 1
+fi
+grep -Fqx "set -g @continuum-save-interval '0'" "$ROOT/config/tmux-session-recovery.conf"
+
 fake_cmux="$TMP_ROOT/cmux-real"
 fake_log="$TMP_ROOT/cmux.log"
 cat >"$fake_cmux" <<'FAKE'
