@@ -47,6 +47,8 @@ A clean result ends with `mismatches=0`.
 - `launchagents/`: templates rendered with the current home directory.
 - `patches/`: the small tmux-resurrect tmux 3.7 compatibility patch.
 - `tests/`: syntax, fixture, patch-application, plist, and isolated tmux target tests.
+- `examples/`: a single-file cmux-to-Moshi reproducer that deliberately exposes
+  the one-shadow-session-per-surface grouping limitation.
 
 ## Dependencies
 

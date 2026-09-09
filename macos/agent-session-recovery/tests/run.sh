@@ -28,6 +28,60 @@ fi
 
 mkdir -p "$TMP_ROOT/pycache"
 PYTHONPYCACHEPREFIX="$TMP_ROOT/pycache" python3 -m py_compile "$ROOT"/claude-hooks/*.py
+PYTHONPYCACHEPREFIX="$TMP_ROOT/pycache" python3 -m py_compile "$ROOT"/examples/moshi-cmux-mre.py
+
+PYTHONPYCACHEPREFIX="$TMP_ROOT/pycache" python3 - "$ROOT/examples/moshi-cmux-mre.py" "$TMP_ROOT" <<'PY'
+import importlib.util
+import io
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+script, tmp_root = Path(sys.argv[1]), Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("moshi_cmux_mre", script)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+assert module.surface_key("ABCD-1234") == "abcd1234"
+assert module.split_keys(b"a\x1b[Ab") == [b"a", b"\x1b[A", b"b"]
+frame = module.paint(
+    {
+        "row_spans": [{"row": 0, "column": 1, "text": "hi"}],
+        "cursor": {"row": 1, "column": 2, "visible": True},
+    },
+    4,
+    2,
+)
+assert " hi " in frame
+assert frame.endswith("\x1b[2;3H\x1b[?25h")
+
+calls = []
+
+def fake_tmux(*args, check=False):
+    calls.append(args)
+    return subprocess.CompletedProcess(args, 1 if args[0] == "has-session" else 0, "", "")
+
+module.run_tmux = fake_tmux
+module.tempfile.gettempdir = lambda: str(tmp_root)
+os.environ["CMUX_SURFACE_ID"] = "ABCD-1234"
+os.environ["CMUX_WORKSPACE_ID"] = "WORKSPACE-9"
+payload = json.dumps(
+    {
+        "hook_event_name": "SessionStart",
+        "session_id": "session-1",
+        "cwd": "/tmp/project",
+    }
+)
+sys.stdin = io.StringIO(payload)
+assert module.bind_hook() == 0
+assert any(call[:4] == ("new-session", "-d", "-s", "moshi-cmux-mre-abcd1234") for call in calls)
+assert ("set-option", "-t", "moshi-cmux-mre-abcd1234:", "@cmux_surface_id", "ABCD-1234") in calls
+assert ("set-option", "-t", "moshi-cmux-mre-abcd1234:", "@cmux_workspace_id", "WORKSPACE-9") in calls
+assert (tmp_root / "moshi-cmux-mre" / "abcd1234.json").read_text() == payload
+PY
 
 for template in "$ROOT"/launchagents/*.plist.in; do
   rendered="$TMP_ROOT/$(basename "${template%.in}")"
@@ -163,7 +217,7 @@ if [ -x /opt/homebrew/bin/tmux ]; then
 fi
 
 hardcoded_home="/Users/""aayushgupta"
-if rg -n "$hardcoded_home" "$ROOT" --glob "!README.md"; then
+if rg --no-ignore -n "$hardcoded_home" "$ROOT" --glob "!README.md"; then
   echo "tracked runtime source contains an untemplated home path" >&2
   exit 1
 fi
