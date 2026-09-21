@@ -143,6 +143,15 @@ else:
         sample.write_text(json.dumps({'updated':time.time(),'panes':['%2']}))
         self.assertTrue(mirror.session_attached(sample))
 
+    def test_unowned_restored_name_collision_is_preserved(self):
+        name=self.mod.groups(self.data)[0]['name']
+        old=self.tmux('new-session','-d','-P','-F','#{pane_id}','-s',name,'sleep 120')
+        bindings=self.mod.sync(self.data)
+        self.assertNotEqual(bindings['A'][2]['pane'],old)
+        self.assertEqual(self.tmux('display-message','-p','-t',old,'#{session_name}'),name)
+        panes={s:b[2]['pane'] for s,b in bindings.items()}
+        self.assertEqual(panes,{s:b[2]['pane'] for s,b in self.mod.sync(self.data).items()})
+
     def test_tree_failure_preserves_existing_views(self):
         self.mod.sync(self.data)
         before=self.tmux('list-panes','-a','-F','#{pane_id}')

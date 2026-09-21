@@ -114,8 +114,9 @@ def sync(data):
             current_name = next((r['name'] for r in rows if r['session'] == session), group['name'])
             if current_name != group['name']:
                 if tmux('has-session', '-t', '='+group['name'], check=False).returncode == 0:
-                    raise RuntimeError('group rename collides with existing session')
-                tmux('rename-session', '-t', session, group['name'])
+                    group['name'] = current_name  # preserve an unowned restored shell
+                else:
+                    tmux('rename-session', '-t', session, group['name'])
                 for row in rows:
                     if row['session'] == session:
                         row['name'] = group['name']
@@ -134,8 +135,11 @@ def sync(data):
             fresh = row is None
             if not session:
                 # New session's first window is a real mirror, never an unrelated shell.
-                if tmux('has-session', '-t', '='+group['name'], check=False).returncode == 0:
-                    raise RuntimeError('unowned tmux name collision: ' + group['name'])
+                base_name = group['name']
+                suffix = 2
+                while tmux('has-session', '-t', '='+group['name'], check=False).returncode == 0:
+                    group['name'] = f'{base_name}-{suffix}'
+                    suffix += 1
                 created = tmux('new-session', '-d', '-P', '-F', '#{session_id}\t#{window_id}\t#{pane_id}',
                                '-s', group['name'], '-n', surface['title'] or 'terminal', start).stdout.strip().split('\t')
                 session, wid, pid = created
