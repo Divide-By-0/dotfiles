@@ -85,3 +85,49 @@ tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_curr
 ```
 
 A successful startup log reports `restore complete` with `live_after` greater than or equal to the snapshot's expected pane count.
+
+## Moshi navigation of native cmux tabs
+
+The grouped bridge exposes each cmux workspace/pane **horizontal tab strip**
+as one tmux session, and each terminal tab as a tmux window in the same order.
+Native macOS windows, cmux workspaces, and split panes remain distinct groups.
+Browser/simulator tabs are omitted because they are not terminal streams.
+Sessions use `cmux-<workspace-title>-<stable-id>`; window titles follow cmux.
+
+Moshi's documented swipe sends the configured tmux prefix followed by `n` or
+`p`. This now changes the mirrored surface using normal tmux window selection;
+it does not send navigation keystrokes to the agent or change desktop focus.
+Use Moshi's session picker to open the `cmux-` group. The bridge reads the real
+surface and forwards input to it; it never launches a second Claude/Codex.
+Claude hooks run inside the matching mirror pane so approval/result bindings
+retain a real, stable tmux pane ID. Plain terminals and Codex TUIs are also
+viewable and controllable, without adding or replacing Codex notification hooks.
+
+`install.sh --activate` installs `com.aayush.moshi-cmux-groups`, which reconciles
+cmux topology every 15 seconds. Hook events also reconcile before enqueuing.
+Reconciliation uses a shared filesystem lock, atomic metadata writes, and
+explicit ownership tags; unavailable/malformed cmux state never triggers pruning.
+Only a pane visible to an attached client mirrors/resizes its real terminal.
+The bridge preserves pane IDs across tab reorder/moves and updates titles.
+Old per-surface helper sessions are not automatically deleted: restored helpers
+may now contain user shells. The old helper names may remain in the picker;
+new hooks bind to the grouped `cmux-` sessions.
+
+State: `~/.claude/hooks/moshi-cmux-groups/`. Service log:
+`~/Library/Logs/moshi-cmux-groups.log`. Dry-run topology:
+
+```sh
+python3 ~/.claude/hooks/moshi-cmux-groups.py --dry-run
+```
+
+Tests use a separate tmux socket and stub cmux/Moshi executables. They exercise
+concurrent sync, reorder/rename/move/close, hook pane attribution, unavailable
+RPC, actual attached-client prefix+n/p input, replay, and invisible-pane gating.
+They run in CI and via `tests/run.sh`. `tests/live_moshi_groups.py` is an opt-in
+smoke test for a disposable workspace named `Moshi integration test (temporary)`
+with exactly two terminal shells. It exercises the installed cmux RPC and
+Moshi context detector; it does not prove the phone's configured swipe gesture.
+
+This adds a host compatibility layer, not native cmux support inside Moshi.
+Moshi must detect tmux and its shortcut prefix must match the host. See
+https://getmoshi.app/docs/tmux for the gesture and context-detection contract.

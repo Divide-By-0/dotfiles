@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.aayush.moshi-cmux-groups</string>
+  <key>ProgramArguments</key><array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>__HOME__/.claude/hooks/moshi-cmux-groups.py</string>
+    <string>--watch</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/moshi-cmux-groups.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/moshi-cmux-groups.log</string>
+</dict></plist>

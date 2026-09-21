@@ -33,7 +33,7 @@ for name in tmux-resume-pane.sh resurrect-restore-guard.sh resurrect-secretty-fi
   backup_and_link "$ROOT/tmux/$name" "$HOME/.tmux/$name"
 done
 
-for name in moshi-claude-hook.sh moshi-cmux-mirror.py moshi-cmux-title.py moshi-ghost-keeper.sh tmux-pane-session.sh; do
+for name in moshi-claude-hook.sh moshi-cmux-groups.py moshi-cmux-mirror.py moshi-cmux-title.py moshi-ghost-keeper.sh tmux-pane-session.sh; do
   backup_and_link "$ROOT/claude-hooks/$name" "$HOME/.claude/hooks/$name"
 done
 
@@ -97,9 +97,11 @@ render_plist "$ROOT/launchagents/com.aayush.tmux-autostart.plist.in" "$HOME/Libr
 render_plist "$ROOT/launchagents/com.aayush.tmux-daily-resurrect-save.plist.in" "$HOME/Library/LaunchAgents/com.aayush.tmux-daily-resurrect-save.plist"
 render_plist "$ROOT/launchagents/com.aayush.tmux-periodic-resurrect-save.plist.in" "$HOME/Library/LaunchAgents/com.aayush.tmux-periodic-resurrect-save.plist"
 
+render_plist "$ROOT/launchagents/com.aayush.moshi-cmux-groups.plist.in" "$HOME/Library/LaunchAgents/com.aayush.moshi-cmux-groups.plist"
+
 if [ "${1:-}" = "--activate" ]; then
   domain="gui/$(id -u)"
-  for label in com.aayush.tmux-autostart com.aayush.tmux-daily-resurrect-save com.aayush.tmux-periodic-resurrect-save; do
+  for label in com.aayush.tmux-autostart com.aayush.tmux-daily-resurrect-save com.aayush.tmux-periodic-resurrect-save com.aayush.moshi-cmux-groups; do
     if [ "$label" = "com.aayush.tmux-autostart" ] && launchctl print "$domain/$label" >/dev/null 2>&1; then
       # Reloading a RunAtLoad restore job while tmux is live would restore the
       # same snapshot into the current server. The scripts are symlinked, so the

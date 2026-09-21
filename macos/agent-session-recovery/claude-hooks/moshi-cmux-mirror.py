@@ -30,7 +30,7 @@ from pathlib import Path
 
 CMUX = os.environ.get("CMUX_BIN") or shutil.which("cmux") or "/opt/homebrew/bin/cmux"
 MOSHI = os.environ.get("MOSHI_BIN") or shutil.which("moshi") or "/opt/homebrew/bin/moshi"
-LOG = Path.home() / ".claude/hooks/moshi-sessionstart.log"
+LOG = Path(os.environ.get("MOSHI_LOG_PATH", str(Path.home() / ".claude/hooks/moshi-sessionstart.log")))
 
 # Special keys → cmux surface.send_key names (when recognized).
 KEY_MAP = {
@@ -67,9 +67,9 @@ def rpc(method: str, params: dict | None = None) -> dict:
     if params is not None:
         args.append(json.dumps(params))
     try:
-        out = subprocess.check_output(args, stderr=subprocess.DEVNULL, text=True)
+        out = subprocess.check_output(args, stderr=subprocess.DEVNULL, text=True, timeout=5)
         return json.loads(out) if out.strip() else {}
-    except (subprocess.CalledProcessError, json.JSONDecodeError, OSError) as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as e:
         return {"_error": str(e)}
 
 
@@ -320,23 +320,36 @@ def forward_key(surface_id: str, key: bytes) -> None:
     send_text(surface_id, text)
 
 
-def session_attached() -> bool:
-    """True when a Moshi/phone (or other) client is attached to this tmux session."""
+def session_attached(visibility_path: Path | None = None) -> bool:
+    """Only the pane actually visible to an attached client owns the viewport.
+
+    Session-attached is insufficient with sibling windows: every background
+    mirror would otherwise resize and redraw its desktop surface on each swipe.
+    Explicit pane targeting also survives moving windows between sessions.
+    """
+    pane = os.environ.get("TMUX_PANE")
     if not os.environ.get("TMUX"):
-        return True  # not under tmux — assume interactive
+        return True
+    if not pane:
+        return False
+    if visibility_path is not None:
+        sample = load_state(visibility_path)
+        if time.time() - sample.get("updated", 0) < 2:
+            return pane in sample.get("panes", [])
     try:
-        out = subprocess.check_output(
-            ["tmux", "display-message", "-p", "#{session_attached}"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        return int(out or "0") > 0
-    except (subprocess.CalledProcessError, ValueError, OSError):
+        visible = subprocess.check_output(
+            ["tmux", "list-clients", "-F", "#{pane_id}"],
+            text=True, timeout=3, stderr=subprocess.DEVNULL,
+        ).splitlines()
+        return pane in visible
+    except (subprocess.SubprocessError, OSError):
         return False
 
 
 def refresh_names(state: dict, state_path: Path) -> None:
     """Keep tmux session/window names aligned with the live cmux tab title."""
+    if state.get("grouped"):
+        return  # the topology reconciler owns shared session/window names
     surface_id = state.get("surface_id") or ""
     if not surface_id:
         return
@@ -475,7 +488,7 @@ def main() -> int:
     cols = rows = 0
     key_buf = bytearray()
     active_interval = 1.0 / max(args.fps, 1.0)
-    idle_interval = 1.0  # only drain hooks; do not hammer cmux
+    idle_interval = 2.0  # only drain hooks; do not hammer cmux
 
     try:
         while not stop:
@@ -497,7 +510,8 @@ def main() -> int:
                 state = load_state(state_path)
                 last_name_refresh = now
 
-            attached = session_attached()
+            visibility_path = state_path.parent / "visibility.json" if state.get("grouped") else None
+            attached = session_attached(visibility_path)
 
             # Phone disconnected: stop resizing/mirroring immediately so the
             # desktop cmux tab stops flashing.
@@ -508,6 +522,9 @@ def main() -> int:
                 last_idle_draw = now
                 log(f"mirror idle (detached) surface={surface_id}")
 
+            if attached and not was_attached:
+                winch["flag"] = True
+                last_rev = last_epoch = last_seq = None
             was_attached = attached
 
             if not attached:
@@ -522,7 +539,7 @@ def main() -> int:
                     if not chunk:
                         stop = True
                         break
-                time.sleep(idle_interval)
+                time.sleep(.25 if visibility_path and visibility_path.exists() else idle_interval)
                 continue
 
             local_cols, local_rows = term_size()

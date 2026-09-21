@@ -224,3 +224,5 @@ fi
 
 git -C "$ROOT" diff --check
 echo "agent-session-recovery tests passed"
+
+PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_moshi_groups.py" -v
