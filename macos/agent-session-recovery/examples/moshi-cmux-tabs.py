@@ -83,6 +83,7 @@ def frame(grid, columns, rows):
 
 
 def mirror(surface_id):
+    client_id = 'moshi-example-' + uuid.uuid4().hex
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     decoder = codecs.getincrementaldecoder('utf-8')('replace')
@@ -116,13 +117,17 @@ def mirror(surface_id):
                     rpc('surface.send_text', surface_id=surface_id, text=key)
             size = os.get_terminal_size(sys.stdout.fileno())
             replay = rpc('terminal.replay', surface_id=surface_id,
-                         columns=size.columns, rows=size.lines)
+                         client_id=client_id, viewport_columns=size.columns,
+                         viewport_rows=size.lines)
             grid = replay.get('render_grid')
             if not grid:
                 continue  # A newly created cmux terminal may not have a grid yet.
+            if grid.get('columns', size.columns) > size.columns or grid.get('rows', size.lines) > size.lines:
+                continue  # Wait for native reflow instead of clipping an old frame.
             sys.stdout.write(frame(grid, size.columns, size.lines))
             sys.stdout.flush()
     finally:
+        rpc('terminal.viewport', surface_id=surface_id, client_id=client_id, clear=True)
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         sys.stdout.write('\x1b[?25h\x1b[?1049l')
         sys.stdout.flush()

@@ -6,9 +6,11 @@ import os
 from pathlib import Path
 import pty
 import select
+import signal
 import subprocess
 import sys
 import tempfile
+import termios
 import time
 import unittest
 import uuid
@@ -165,6 +167,7 @@ else:
         a=bindings['A'][2];b=bindings['B'][2]
         self.tmux('select-window','-t',a['window'])
         master,slave=pty.openpty()
+        termios.tcsetwinsize(slave, (30, 37))
         proc=subprocess.Popen(['tmux','-L',self.socket,'attach-session','-t',a['session']],stdin=slave,stdout=slave,stderr=slave,env=os.environ.copy())
         os.close(slave);self.clients.append((proc,master))
         def wait_for(predicate):
@@ -183,9 +186,36 @@ else:
         sent=[json.loads(r[1]) for r in records if r[0]=='surface.send_text']
         self.assertEqual(sent[-1],{'surface_id':'B','text':'x'})
         self.assertFalse(any(json.loads(r[1])['surface_id'] in {'C','D'} for r in records))
+        # These are the real cmux resize inputs; columns/rows are silently ignored.
+        def reports(sid):
+            return [json.loads(r[1]) for r in map(json.loads, calls.read_text().splitlines())
+                    if r[0]=='terminal.replay' and json.loads(r[1])['surface_id']==sid]
+        wait_for(lambda: reports('B'))
+        report=reports('B')[-1]
+        self.assertEqual(report['viewport_columns'],37)
+        self.assertEqual(report['viewport_rows'],29)
+        self.assertTrue(report['client_id'].startswith('moshi-tmux-'))
+        self.assertNotIn('columns',report)
+        termios.tcsetwinsize(master, (43, 52))
+        proc.send_signal(signal.SIGWINCH)  # openpty/Popen has no controlling tty
+        wait_for(lambda: reports('B')[-1].get('viewport_columns')==52)
+        self.assertEqual(reports('B')[-1]['viewport_rows'],42)
+        def cleared(sid):
+            return any(r[0]=='terminal.viewport' and json.loads(r[1]).get('surface_id')==sid
+                       and json.loads(r[1]).get('clear') is True
+                       for r in map(json.loads,calls.read_text().splitlines()))
         os.write(master,b'\x02p')
         wait_for(lambda:self.tmux('display-message','-p','-t',a['session'],'#{pane_id}')==a['pane'])
         wait_for(lambda:'MIRROR-TEST' in self.tmux('capture-pane','-p','-t',a['pane']))
+        wait_for(lambda:cleared('B'))
+        os.write(master,b'\x02d')
+        wait_for(lambda:cleared('A'))
+
+    def test_stale_desktop_grid_waits_for_reflow(self):
+        mirror=load('moshi-cmux-mirror')
+        self.assertFalse(mirror.grid_fits({'columns':156,'rows':51},37,29))
+        self.assertTrue(mirror.grid_fits({'columns':37,'rows':29},37,29))
+        self.assertTrue(mirror.grid_fits({'columns':30,'rows':20},37,29))
 
 
 if __name__=='__main__':
