@@ -1,3 +1,35 @@
+# Minimal grouped-tab example
+
+Download **`moshi-cmux-tabs.py`** and run it from a cmux terminal:
+
+```sh
+python3 moshi-cmux-tabs.py
+```
+
+Requirements: cmux, tmux, Python 3, and an already-connected Moshi installation.
+No Python packages or other repository files are needed. Open the printed
+`cmux-demo-...` session in Moshi's tmux session picker. Its windows mirror the
+terminal tabs in that horizontal tab strip, in their current order. Prefix
+`Ctrl-b` then `n` / `p` switches between them. Moshi's tmux swipe uses those
+commands; the phone UI itself has not been tested.
+
+The example snapshots one tab strip. It does not sync later tab changes or
+install notification hooks, background services, or agent processes. Display
+is plain text with basic keyboard input; colors, mouse, wide-character layout,
+and viewport resizing are intentionally omitted. It leaves desktop focus alone.
+Reruns create separate demo sessions; remove an old demo with:
+
+```sh
+tmux kill-session -t '=cmux-demo-<printed-id>'
+```
+
+This closes only the mirrors, not the original cmux terminals. Tested with
+cmux 0.64.22 and moshi-hook 0.3.19: two real cmux shells, tmux next/previous,
+command input/output round trips, and `moshi context`. Automated coverage runs
+in CI (`tests/test_moshi_example.py`).
+
+---
+
 # Minimal cmux to Moshi reproducer
 
 `moshi-cmux-mre.py` isolates the smallest working shape of the local bridge:
