@@ -1,0 +1,16 @@
+diff --git a/scripts/save.sh b/scripts/save.sh
+--- a/scripts/save.sh
++++ b/scripts/save.sh
+@@ -39,7 +39,11 @@ pane_format() {
+ 	format+="${delimiter}"
+ 	format+="#{pane_index}"
+ 	format+="${delimiter}"
+-	format+="#{pane_title}"
++	# Bash read collapses adjacent tab delimiters. An empty title shifts cwd,
++	# active, command and pid left, so pane_full_command reads history_size as
++	# the pid and saves no restart command. Keep the title field nonempty for
++	# both the save parser and restore parser (including captured contents).
++	format+="#{?pane_title,#{pane_title},(untitled)}"
+ 	format+="${delimiter}"
+ 	format+=":#{pane_current_path}"
+ 	format+="${delimiter}"

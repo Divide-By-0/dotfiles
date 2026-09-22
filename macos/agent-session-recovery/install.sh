@@ -70,6 +70,17 @@ else
   exit 1
 fi
 
+title_patch="$ROOT/patches/tmux-resurrect-empty-pane-title.patch"
+if git -C "$plugin_root" apply --reverse --check "$title_patch" >/dev/null 2>&1; then
+  echo "tmux-resurrect empty-title patch already applied"
+elif git -C "$plugin_root" apply --check "$title_patch"; then
+  git -C "$plugin_root" apply "$title_patch"
+  echo "applied tmux-resurrect empty-title patch"
+else
+  echo "tmux-resurrect changed upstream; refusing to force the empty-title patch." >&2
+  exit 1
+fi
+
 ensure_tmux_source() {
   conf="$HOME/.tmux.conf"
   line="source-file \"$ROOT/config/tmux-session-recovery.conf\""

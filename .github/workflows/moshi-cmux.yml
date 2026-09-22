@@ -16,3 +16,11 @@ jobs:
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_groups.py -v
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_pty_capacity.py -v
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_example.py -v
+      - uses: actions/checkout@v4
+        with:
+          repository: tmux-plugins/tmux-resurrect
+          ref: cff343cf9e81983d3da0c8562b01616f12e8d548
+          path: .test-tmux-resurrect
+      - run: python3 macos/agent-session-recovery/tests/test_resurrect_empty_title.py -v
+        env:
+          TMUX_RESURRECT_SOURCE: .test-tmux-resurrect
