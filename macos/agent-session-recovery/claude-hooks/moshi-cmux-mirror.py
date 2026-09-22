@@ -26,11 +26,13 @@ import sys
 import termios
 import time
 import tty
+import uuid
 from pathlib import Path
 
 CMUX = os.environ.get("CMUX_BIN") or shutil.which("cmux") or "/opt/homebrew/bin/cmux"
 MOSHI = os.environ.get("MOSHI_BIN") or shutil.which("moshi") or "/opt/homebrew/bin/moshi"
 LOG = Path(os.environ.get("MOSHI_LOG_PATH", str(Path.home() / ".claude/hooks/moshi-sessionstart.log")))
+VIEWPORT_CLIENT_ID = "moshi-tmux-" + uuid.uuid4().hex
 
 # Special keys → cmux surface.send_key names (when recognized).
 KEY_MAP = {
@@ -88,11 +90,31 @@ def term_size() -> tuple[int, int]:
     return cols, rows
 
 
-def set_viewport(surface_id: str, cols: int, rows: int) -> None:
+def clear_viewport(surface_id: str) -> None:
     rpc(
         "terminal.viewport",
-        {"surface_id": surface_id, "columns": cols, "rows": rows},
+        {"surface_id": surface_id, "client_id": VIEWPORT_CLIENT_ID, "clear": True},
     )
+
+
+def replay_viewport(surface_id: str, cols: int, rows: int) -> dict:
+    # columns/rows are response fields, not resize parameters. Report the phone
+    # dimensions with replay so Ghostty reflows and the real TUI gets SIGWINCH.
+    # Replay reports expire if this process dies; terminal.viewport reports are
+    # sticky and can leave the desktop pinned after an unclean mirror exit.
+    return rpc("terminal.replay", {
+        "surface_id": surface_id,
+        "client_id": VIEWPORT_CLIENT_ID,
+        "viewport_columns": cols,
+        "viewport_rows": rows,
+    })
+
+
+def grid_fits(grid: dict, cols: int, rows: int) -> bool:
+    # A resize may return a stale desktop frame before the new grid is ready.
+    # Wait for reflow instead of silently cropping it. Smaller shared viewports
+    # are valid (another attached client can own the minimum terminal size).
+    return int(grid.get("columns", cols)) <= cols and int(grid.get("rows", rows)) <= rows
 
 
 def send_text(surface_id: str, text: str) -> None:
@@ -467,6 +489,7 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, handle_sig)
     signal.signal(signal.SIGINT, handle_sig)
+    signal.signal(signal.SIGHUP, handle_sig)
 
     winch = {"flag": True}
 
@@ -485,6 +508,7 @@ def main() -> int:
     last_name_refresh = 0.0
     last_idle_draw = 0.0
     was_attached = False
+    viewport_surface = None
     cols = rows = 0
     key_buf = bytearray()
     active_interval = 1.0 / max(args.fps, 1.0)
@@ -494,6 +518,10 @@ def main() -> int:
         while not stop:
             state = load_state(state_path)
             surface_id = state.get("surface_id") or ""
+            if viewport_surface and viewport_surface != surface_id:
+                clear_viewport(viewport_surface)
+                viewport_surface = None
+                last_rev = last_epoch = last_seq = None
             if not surface_id:
                 sys.stdout.write(
                     "\x1b[H\x1b[JMoshi ↔ cmux mirror\r\n"
@@ -516,6 +544,9 @@ def main() -> int:
             # Phone disconnected: stop resizing/mirroring immediately so the
             # desktop cmux tab stops flashing.
             if was_attached and not attached:
+                if viewport_surface:
+                    clear_viewport(viewport_surface)
+                    viewport_surface = None
                 winch["flag"] = False
                 last_rev = last_epoch = last_seq = None
                 draw_idle_status(state)
@@ -545,7 +576,6 @@ def main() -> int:
             local_cols, local_rows = term_size()
             if winch["flag"] or (local_cols, local_rows) != (cols, rows):
                 cols, rows = local_cols, local_rows
-                set_viewport(surface_id, cols, rows)
                 last_rev = last_epoch = last_seq = None
             winch["flag"] = False
             paint_cols, paint_rows = cols, rows
@@ -562,20 +592,14 @@ def main() -> int:
                 for key in read_keys(key_buf):
                     forward_key(surface_id, key)
 
-            replay = rpc(
-                "terminal.replay",
-                {
-                    "surface_id": surface_id,
-                    "columns": paint_cols,
-                    "rows": paint_rows,
-                },
-            )
+            viewport_surface = surface_id
+            replay = replay_viewport(surface_id, paint_cols, paint_rows)
             if "_error" not in replay:
                 grid = replay.get("render_grid") or {}
                 cur_epoch = grid.get("render_epoch")
                 cur_rev = grid.get("render_revision")
                 cur_seq = grid.get("state_seq")
-                if (cur_epoch, cur_rev, cur_seq) != (last_epoch, last_rev, last_seq):
+                if grid_fits(grid, paint_cols, paint_rows) and (cur_epoch, cur_rev, cur_seq) != (last_epoch, last_rev, last_seq):
                     frame = build_frame(grid, paint_cols, paint_rows)
                     sys.stdout.write(frame)
                     sys.stdout.flush()
@@ -584,6 +608,8 @@ def main() -> int:
             drain_queue(queue_dir)
             time.sleep(active_interval)
     finally:
+        if viewport_surface:
+            clear_viewport(viewport_surface)
         try:
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old)
         except termios.error:

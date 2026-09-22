@@ -26,6 +26,7 @@ import tempfile
 import termios
 import time
 import tty
+import uuid
 from pathlib import Path
 
 CMUX = os.environ.get("CMUX_BIN") or shutil.which("cmux") or "cmux"
@@ -214,18 +215,11 @@ def mirror(surface_id: str, payload_path: Path, fps: float = 8.0) -> int:
     sys.stdout.write("\x1b[?1049h\x1b[?25l")
     sys.stdout.flush()
 
-    last_size = (0, 0)
+    client_id = "moshi-example-" + uuid.uuid4().hex
     try:
         while not stopping:
             size = os.get_terminal_size(sys.stdout.fileno())
             cols, rows = max(20, size.columns), max(10, size.lines)
-            if (cols, rows) != last_size:
-                rpc(
-                    "terminal.viewport",
-                    {"surface_id": surface_id, "columns": cols, "rows": rows},
-                )
-                last_size = (cols, rows)
-
             ready, _, _ = select.select([sys.stdin], [], [], 1.0 / max(fps, 1.0))
             if ready:
                 data = os.read(sys.stdin.fileno(), 1024)
@@ -236,13 +230,15 @@ def mirror(surface_id: str, payload_path: Path, fps: float = 8.0) -> int:
 
             replay = rpc(
                 "terminal.replay",
-                {"surface_id": surface_id, "columns": cols, "rows": rows},
+                {"surface_id": surface_id, "client_id": client_id,
+                 "viewport_columns": cols, "viewport_rows": rows},
             )
             grid = replay.get("render_grid") or {}
-            if grid:
+            if grid and grid.get("columns", cols) <= cols and grid.get("rows", rows) <= rows:
                 sys.stdout.write(paint(grid, cols, rows))
                 sys.stdout.flush()
     finally:
+        rpc("terminal.viewport", {"surface_id": surface_id, "client_id": client_id, "clear": True})
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_termios)
         sys.stdout.write("\x1b[?25h\x1b[?1049l")
         sys.stdout.flush()

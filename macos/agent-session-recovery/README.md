@@ -15,6 +15,14 @@ This directory is the source of truth for the local cmux, tmux, Claude, Codex, M
 
 ## Generated tmux names
 
+Moshi mirrors report the visible phone pane's width and height to cmux using
+`client_id`, `viewport_columns`, and `viewport_rows` on `terminal.replay`.
+Ghostty reflows the terminal and sends the running application SIGWINCH, as with
+native tmux resizing. Oversized frames are skipped while resizing instead of
+being cropped. Switching away, disconnecting, or stopping the mirror releases
+its viewport; replay reports also expire if the mirror crashes. Other clients'
+viewport reports remain independent.
+
 Moshi needs a tmux pane through which it can mirror a cmux terminal. These helper sessions use the human tab title plus the agent directory basename:
 
 ```text
