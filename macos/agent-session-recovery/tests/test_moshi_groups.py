@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real isolated tmux tests. No user terminals, hooks, or pairing are used."""
 import importlib.util
+import errno
 import json
 import os
 from pathlib import Path
@@ -173,7 +174,12 @@ else:
         def wait_for(predicate):
             deadline=time.monotonic()+8
             while time.monotonic()<deadline:
-                if select.select([master],[],[],.1)[0]: os.read(master,65536)
+                if select.select([master],[],[],.1)[0]:
+                    try:
+                        os.read(master,65536)
+                    except OSError as exc:
+                        if exc.errno != errno.EIO:
+                            raise  # Linux reports EIO when the detached client closes its PTY.
                 if predicate(): return
             self.fail('timed out waiting for terminal behavior')
         wait_for(lambda:self.tmux('display-message','-p','-t',a['pane'],'#{session_attached}')=='1')
