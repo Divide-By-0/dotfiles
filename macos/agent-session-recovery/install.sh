@@ -30,7 +30,19 @@ backup_and_link() {
   echo "linked $dst -> $src"
 }
 
-for name in wait-for-pty-capacity.sh cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh tmux-periodic-resurrect-save.sh agent-session-doctor; do
+# launchd's shell may not read a script symlinked into protected Documents.
+# Install this entry point as a copy; its reviewed source stays in this repo.
+pty_gate="$HOME/.local/bin/wait-for-pty-capacity.sh"
+mkdir -p "$(dirname "$pty_gate")"
+if [ -L "$pty_gate" ] || ! cmp -s "$ROOT/bin/wait-for-pty-capacity.sh" "$pty_gate"; then
+  if [ -e "$pty_gate" ] || [ -L "$pty_gate" ]; then
+    mv "$pty_gate" "${pty_gate}.before-agent-session-recovery.${TIMESTAMP}"
+  fi
+  cp "$ROOT/bin/wait-for-pty-capacity.sh" "$pty_gate"
+  chmod 755 "$pty_gate"
+fi
+
+for name in cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh tmux-periodic-resurrect-save.sh agent-session-doctor; do
   backup_and_link "$ROOT/bin/$name" "$HOME/.local/bin/$name"
 done
 

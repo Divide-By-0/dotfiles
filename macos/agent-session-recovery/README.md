@@ -139,6 +139,9 @@ The system LaunchDaemon sets `kern.tty.ptmx_max=999` at boot. Its plist is a
 root-owned copy and runs only Apple's `/usr/sbin/sysctl`, never code in a user's
 writable checkout. `install-pty-capacity.sh` also applies the value immediately.
 
+The user-level readiness entry point is also installed as a copy in `~/.local/bin`
+to avoid launchd shell access failures on symlinks into protected Documents.
+
 Because launchd does not guarantee ordering between independent jobs, tmux boot
 restore and the Moshi LaunchAgent check the live kernel limit before creating
 terminals. They wait up to 60 seconds and fail without starting panes if the
