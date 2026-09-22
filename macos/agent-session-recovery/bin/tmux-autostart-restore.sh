@@ -42,6 +42,9 @@ if [ ! -x "$TMUX_BIN" ]; then
   exit 1
 fi
 
+# Wait before even the bootstrap pane; LaunchDaemon/LaunchAgent order is not guaranteed.
+"$(dirname "$0")/wait-for-pty-capacity.sh" || exit 1
+
 if ! "$TMUX_BIN" has-session >/dev/null 2>&1; then
   log "starting default tmux server"
   "$TMUX_BIN" new-session -d -s "$BOOTSTRAP_SESSION"

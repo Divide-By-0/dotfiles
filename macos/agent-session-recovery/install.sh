@@ -9,6 +9,11 @@ if [ "$(uname -s)" != "Darwin" ]; then
   exit 1
 fi
 
+if [ "$(/usr/sbin/sysctl -n kern.tty.ptmx_max)" -lt 999 ]; then
+  echo "First run: sudo $ROOT/install-pty-capacity.sh" >&2
+  exit 1
+fi
+
 backup_and_link() {
   src="$1"
   dst="$2"
@@ -25,7 +30,7 @@ backup_and_link() {
   echo "linked $dst -> $src"
 }
 
-for name in cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh tmux-periodic-resurrect-save.sh agent-session-doctor; do
+for name in wait-for-pty-capacity.sh cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh tmux-periodic-resurrect-save.sh agent-session-doctor; do
   backup_and_link "$ROOT/bin/$name" "$HOME/.local/bin/$name"
 done
 

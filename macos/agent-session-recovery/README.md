@@ -61,6 +61,7 @@ Claude settings must invoke `~/.claude/hooks/moshi-claude-hook.sh` for the Moshi
 ```sh
 cd macos/agent-session-recovery
 ./tests/run.sh
+sudo ./install-pty-capacity.sh
 ./install.sh --activate
 tmux source-file ~/.tmux.conf
 ```
@@ -131,3 +132,21 @@ Moshi context detector; it does not prove the phone's configured swipe gesture.
 This adds a host compatibility layer, not native cmux support inside Moshi.
 Moshi must detect tmux and its shortcut prefix must match the host. See
 https://getmoshi.app/docs/tmux for the gesture and context-detection contract.
+
+## PTY capacity and startup ordering
+
+The system LaunchDaemon sets `kern.tty.ptmx_max=999` at boot. Its plist is a
+root-owned copy and runs only Apple's `/usr/sbin/sysctl`, never code in a user's
+writable checkout. `install-pty-capacity.sh` also applies the value immediately.
+
+Because launchd does not guarantee ordering between independent jobs, tmux boot
+restore and the Moshi LaunchAgent check the live kernel limit before creating
+terminals. They wait up to 60 seconds and fail without starting panes if the
+limit is still low. Moshi's existing KeepAlive retries; a failed tmux restore
+can be retried with `launchctl kickstart gui/$(id -u)/com.aayush.tmux-autostart`.
+This gates these managed recovery jobs; it cannot gate arbitrary third-party
+login apps. No reboot is performed by the installer.
+
+Verify with `sysctl kern.tty.ptmx_max`,
+`launchctl print system/com.aayush.pty-capacity`, and `/var/log/pty-capacity.log`.
+After reboot the tmux log must show `PTY capacity ready: 999` before startup.

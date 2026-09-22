@@ -13,7 +13,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for file in "$ROOT"/bin/*.sh "$ROOT"/tmux/*.sh "$ROOT"/claude-hooks/*.sh "$ROOT/install.sh"; do
+for file in "$ROOT"/bin/*.sh "$ROOT"/tmux/*.sh "$ROOT"/claude-hooks/*.sh "$ROOT/install.sh" "$ROOT/install-pty-capacity.sh"; do
   bash -n "$file"
 done
 for file in "$ROOT/bin/cmux" "$ROOT/claude-hooks/moshi-claude-hook.sh" "$ROOT/claude-hooks/moshi-ghost-keeper.sh"; do
@@ -226,3 +226,5 @@ git -C "$ROOT" diff --check
 echo "agent-session-recovery tests passed"
 
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_moshi_groups.py" -v
+
+PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_pty_capacity.py" -v
