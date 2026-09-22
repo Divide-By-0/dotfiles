@@ -1,0 +1,158 @@
+#!/bin/bash
+set -u
+
+TMUX_BIN="${TMUX_BIN:-/opt/homebrew/bin/tmux}"
+STATE_DIR="${HOME}/.claude/hooks/moshi-cmux-binds"
+REAL_CWD="${HOME}/.tmux/real-cwd.sh"
+RESURRECT_DIR="${HOME}/.tmux/resurrect"
+
+json_value() {
+  /usr/bin/plutil -extract "$2" raw -o - "$1" 2>/dev/null || true
+}
+
+describe_session() {
+  session="$1"
+  pane="$("$TMUX_BIN" list-panes -t "${session}:" -F "#{pane_id}" 2>/dev/null | head -1)"
+  command="$("$TMUX_BIN" list-panes -t "${session}:" -F "#{pane_current_command}" 2>/dev/null | head -1)"
+  cwd="$("$TMUX_BIN" list-panes -t "${session}:" -F "#{pane_current_path}" 2>/dev/null | head -1)"
+  kind="ordinary tmux session"
+  detail="cwd=$cwd command=$command pane=$pane"
+  case "$session" in
+    moshi-*)
+      kind="Moshi/cmux mirror"
+      detail="state=live annotated helper cwd=$cwd command=$command pane=$pane"
+      printf "%-34s  %-20s  %s\n" "$session" "$kind" "$detail"
+      return
+      ;;
+    stale-moshi-*)
+      kind="Moshi/cmux mirror"
+      detail="state=restored stale ghost shell cwd=$cwd command=$command pane=$pane"
+      printf "%-34s  %-20s  %s\n" "$session" "$kind" "$detail"
+      return
+      ;;
+  esac
+
+  # Legacy Moshi names always carried a 6- or 12-character surface suffix.
+  # Ordinary sessions need no metadata scan.
+  if [[ ! "$session" =~ -[[:xdigit:]]{6}(-x)?$ ]] &&
+     [[ ! "$session" =~ -[[:xdigit:]]{12}$ ]]; then
+    printf "%-34s  %-20s  %s\n" "$session" "$kind" "$detail"
+    return
+  fi
+
+  if [ -d "$STATE_DIR" ]; then
+    for state in "$STATE_DIR"/*.json; do
+      [ -e "$state" ] || continue
+      saved_name="$(json_value "$state" tmux_session)"
+      surface_id="$(json_value "$state" surface_id)"
+      surface_key="$(printf "%s" "$surface_id" | tr "[:upper:]" "[:lower:]" | tr -cd "a-f0-9" | cut -c1-6)"
+      case "$session" in
+        "$saved_name"|*-"$surface_key"|*-"$surface_key"-x)
+          [ -n "$surface_key" ] || continue
+          title="$(json_value "$state" title)"
+          agent_cwd="$(json_value "$state" cwd)"
+          checkpoint="$(json_value "$state" session_id)"
+          state_label="live ghost mirror"
+          case "$command" in
+            secretty|zsh|bash|sh) state_label="restored stale ghost shell" ;;
+          esac
+          case "$session" in stale-moshi-*) state_label="restored stale ghost shell" ;; esac
+          kind="Moshi/cmux mirror"
+          detail="title=$title surface=${surface_id:0:8} checkpoint=$checkpoint cwd=$agent_cwd state=$state_label pane=$pane"
+          break
+          ;;
+      esac
+    done
+  fi
+
+  printf "%-34s  %-20s  %s\n" "$session" "$kind" "$detail"
+}
+
+claude_project_dir() {
+  printf '%s/.claude/projects/%s' "$HOME" \
+    "$(printf '%s' "$1" | sed 's|/|-|g; s|\.|-|g')"
+}
+
+verify_cwds() {
+  last_name="$(readlink "$RESURRECT_DIR/last" 2>/dev/null || true)"
+  case "$last_name" in
+    /*) snapshot="$last_name" ;;
+    '') echo "No tmux-resurrect snapshot is available." >&2; return 1 ;;
+    *) snapshot="$RESURRECT_DIR/$last_name" ;;
+  esac
+  [ -f "$snapshot" ] || { echo "Missing snapshot: $snapshot" >&2; return 1; }
+
+  checked=0
+  live_match=0
+  checkpoint_match=0
+  mismatches=0
+  while IFS=$'\037' read -r session window pane saved_cwd resume; do
+    [ -n "$session" ] || continue
+    checked=$((checked + 1))
+    target="${session}:${window}.${pane}"
+    pane_pid="$("$TMUX_BIN" list-panes -t "$target" -F '#{pane_pid}' 2>/dev/null | head -1)"
+    if [ -z "$pane_pid" ]; then
+      echo "MISMATCH target=$target saved=$saved_cwd live=missing checkpoint=unknown"
+      mismatches=$((mismatches + 1))
+      continue
+    fi
+    live_cwd="$([ -x "$REAL_CWD" ] && "$REAL_CWD" "$pane_pid" 2>/dev/null)"
+    live_ok=0
+    [ "$live_cwd" = "$saved_cwd" ] && { live_ok=1; live_match=$((live_match + 1)); }
+
+    set -- $resume
+    kind="${2:-}"
+    checkpoint="${3:-}"
+    checkpoint_cwd=""
+    checkpoint_ok=0
+    case "$kind" in
+      cx)
+        rollout="$(find "$HOME/.codex/sessions" -type f -name "*${checkpoint}.jsonl" -print 2>/dev/null | head -1)"
+        if [ -n "$rollout" ]; then
+          checkpoint_cwd="$(head -1 "$rollout" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("payload", {}).get("cwd", ""))' 2>/dev/null || true)"
+          [ "$checkpoint_cwd" = "$saved_cwd" ] && checkpoint_ok=1
+        fi
+        ;;
+      cc)
+        transcript="$(claude_project_dir "$saved_cwd")/${checkpoint}.jsonl"
+        if [ -f "$transcript" ]; then
+          checkpoint_cwd="$saved_cwd"
+          checkpoint_ok=1
+        fi
+        ;;
+    esac
+    [ "$checkpoint_ok" -eq 1 ] && checkpoint_match=$((checkpoint_match + 1))
+    if [ "$live_ok" -ne 1 ] || [ "$checkpoint_ok" -ne 1 ]; then
+      echo "MISMATCH target=$target saved=$saved_cwd live=${live_cwd:-missing} checkpoint=${checkpoint_cwd:-missing} id=$checkpoint"
+      mismatches=$((mismatches + 1))
+    fi
+  done < <(awk -F '\t' '$1 == "pane" && $11 ~ /tmux-resume-pane[.]sh (cc|cx) / { printf "%s%c%s%c%s%c%s%c%s\n", $2, 31, $3, 31, $6, 31, substr($8, 2), 31, substr($11, 2) }' "$snapshot")
+
+  echo "CWD_AUDIT checked=$checked live_match=$live_match checkpoint_match=$checkpoint_match mismatches=$mismatches"
+  [ "$checked" -gt 0 ] && [ "$mismatches" -eq 0 ]
+}
+
+if [ "${1:-}" = "--verify-cwds" ]; then
+  verify_cwds
+  exit $?
+fi
+
+if ! "$TMUX_BIN" has-session >/dev/null 2>&1; then
+  echo "No default tmux server is running." >&2
+  exit 1
+fi
+
+printf "%-34s  %-20s  %s\n" "SESSION" "CLASS" "DETAILS"
+if [ "$#" -gt 0 ]; then
+  for session in "$@"; do
+    if "$TMUX_BIN" has-session -t "${session}:" 2>/dev/null; then
+      describe_session "$session"
+    else
+      printf "%-34s  %-20s  %s\n" "$session" "missing" "not present on the default tmux server"
+    fi
+  done
+else
+  while IFS= read -r session; do
+    describe_session "$session"
+  done < <("$TMUX_BIN" list-sessions -F "#{session_name}" | sort)
+fi

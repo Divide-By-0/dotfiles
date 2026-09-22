@@ -1,0 +1,26 @@
+diff --git a/scripts/restore.sh b/scripts/restore.sh
+index 1a5e3f9..a047756 100755
+--- a/scripts/restore.sh
++++ b/scripts/restore.sh
+@@ -87,13 +87,19 @@ has_restored_session_0() {
+ window_exists() {
+ 	local session_name="$1"
+ 	local window_number="$2"
+-	tmux list-windows -t "$session_name" -F "#{window_index}" 2>/dev/null |
++	# A trailing colon forces tmux to parse this as a session target. Without it,
++	# tmux 3.7 treats dots in names such as ".projects.nosync" or "lxm.house"
++	# as pane separators, so resurrect repeatedly tries to create the session and
++	# silently loses every later window.
++	tmux list-windows -t "${session_name}:" -F "#{window_index}" 2>/dev/null |
+ 		\grep -q "^$window_number$"
+ }
+ 
+ session_exists() {
+ 	local session_name="$1"
+-	tmux has-session -t "$session_name" 2>/dev/null
++	# See window_exists: the colon is required for literal session names that
++	# contain dots on tmux 3.7.
++	tmux has-session -t "${session_name}:" 2>/dev/null
+ }
+ 
+ first_window_num() {
