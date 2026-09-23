@@ -1,0 +1,12 @@
+name: System log recorder
+on:
+  push:
+    paths: ['macos/system-log-recorder/**', '.github/workflows/system-log-recorder.yml']
+  pull_request:
+    paths: ['macos/system-log-recorder/**', '.github/workflows/system-log-recorder.yml']
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s macos/system-log-recorder
