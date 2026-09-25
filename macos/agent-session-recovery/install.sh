@@ -14,44 +14,49 @@ if [ "$(/usr/sbin/sysctl -n kern.tty.ptmx_max)" -lt 999 ]; then
   exit 1
 fi
 
-backup_and_link() {
+# REASON: this checkout lives under ~/Documents, which TCC gates per responsible
+# process. The launchd tmux server, its Moshi tabs, and cmux mirrors have no grant
+# there: every open() through a symlink into this repo waits ~20 s on a TCC
+# approval that never arrives, then fails with EINTR ("Interrupted system call").
+# Python retries EINTR on open() forever, which left mirror panes blank. So every
+# runtime file is installed as a real copy; the reviewed source stays in this repo
+# and re-running this installer refreshes the copies.
+# What breaks if reverted to symlinks: tests/live_launchd_documents.py hangs on
+# the mirror probe and Moshi shows empty cmux tabs again.
+backup_and_install() {
   src="$1"
   dst="$2"
   mkdir -p "$(dirname "$dst")"
-  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
+  if [ ! -L "$dst" ] && cmp -s "$src" "$dst" 2>/dev/null; then
     return 0
   fi
-  if [ -e "$dst" ] || [ -L "$dst" ]; then
+  # An old symlink back into this checkout carries no state; replace it silently.
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then
+    rm "$dst"
+  elif [ -e "$dst" ] || [ -L "$dst" ]; then
     backup="${dst}.before-agent-session-recovery.${TIMESTAMP}"
     mv "$dst" "$backup"
     echo "backed up $dst -> $backup"
   fi
-  ln -s "$src" "$dst"
-  echo "linked $dst -> $src"
+  tmp="${dst}.tmp.$$"
+  cp "$src" "$tmp"
+  chmod "$(stat -f %Lp "$src")" "$tmp"
+  mv "$tmp" "$dst"
+  echo "installed $dst"
 }
 
-# launchd's shell may not read a script symlinked into protected Documents.
-# Install this entry point as a copy; its reviewed source stays in this repo.
-pty_gate="$HOME/.local/bin/wait-for-pty-capacity.sh"
-mkdir -p "$(dirname "$pty_gate")"
-if [ -L "$pty_gate" ] || ! cmp -s "$ROOT/bin/wait-for-pty-capacity.sh" "$pty_gate"; then
-  if [ -e "$pty_gate" ] || [ -L "$pty_gate" ]; then
-    mv "$pty_gate" "${pty_gate}.before-agent-session-recovery.${TIMESTAMP}"
-  fi
-  cp "$ROOT/bin/wait-for-pty-capacity.sh" "$pty_gate"
-  chmod 755 "$pty_gate"
-fi
+backup_and_install "$ROOT/bin/wait-for-pty-capacity.sh" "$HOME/.local/bin/wait-for-pty-capacity.sh"
 
 for name in cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh tmux-periodic-resurrect-save.sh agent-session-doctor; do
-  backup_and_link "$ROOT/bin/$name" "$HOME/.local/bin/$name"
+  backup_and_install "$ROOT/bin/$name" "$HOME/.local/bin/$name"
 done
 
 for name in tmux-resume-pane.sh resurrect-restore-guard.sh resurrect-secretty-fix.sh real-cwd.sh agent-window-name.sh reconcile-moshi-sessions.py; do
-  backup_and_link "$ROOT/tmux/$name" "$HOME/.tmux/$name"
+  backup_and_install "$ROOT/tmux/$name" "$HOME/.tmux/$name"
 done
 
 for name in moshi-claude-hook.sh moshi-cmux-groups.py moshi-cmux-mirror.py moshi-cmux-title.py moshi-ghost-keeper.sh tmux-pane-session.sh; do
-  backup_and_link "$ROOT/claude-hooks/$name" "$HOME/.claude/hooks/$name"
+  backup_and_install "$ROOT/claude-hooks/$name" "$HOME/.claude/hooks/$name"
 done
 
 plugin_root="$HOME/.tmux/plugins/tmux-resurrect"
@@ -70,10 +75,29 @@ else
   exit 1
 fi
 
+CONFIG_DIR="$HOME/.config/agent-session-recovery"
+backup_and_install "$ROOT/config/tmux-session-recovery.conf" "$CONFIG_DIR/tmux-session-recovery.conf"
+backup_and_install "$ROOT/config/zsh-session-recovery.zsh" "$CONFIG_DIR/zsh-session-recovery.zsh"
+
+# Earlier installs sourced the config straight from this checkout; point those
+# lines at the installed copy instead of adding a second source line.
+replace_legacy_source() {
+  conf="$1"
+  legacy="$2"
+  line="$3"
+  grep -Fqx "$legacy" "$conf" 2>/dev/null || return 0
+  tmp=$(mktemp "${TMPDIR:-/tmp}/rc.XXXXXX")
+  awk -v legacy="$legacy" -v line="$line" '$0 == legacy { print line; next } { print }' "$conf" >"$tmp"
+  cat "$tmp" >"$conf"
+  rm -f "$tmp"
+  echo "repointed $conf at $CONFIG_DIR"
+}
+
 ensure_tmux_source() {
   conf="$HOME/.tmux.conf"
-  line="source-file \"$ROOT/config/tmux-session-recovery.conf\""
+  line="source-file \"$CONFIG_DIR/tmux-session-recovery.conf\""
   touch "$conf"
+  replace_legacy_source "$conf" "source-file \"$ROOT/config/tmux-session-recovery.conf\"" "$line"
   grep -Fqx "$line" "$conf" 2>/dev/null && return 0
   tmp=$(mktemp "${TMPDIR:-/tmp}/tmux-conf.XXXXXX")
   awk -v line="$line" '
@@ -87,8 +111,9 @@ ensure_tmux_source() {
 
 ensure_zsh_source() {
   conf="$HOME/.zshrc"
-  line="source \"$ROOT/config/zsh-session-recovery.zsh\""
+  line="source \"$CONFIG_DIR/zsh-session-recovery.zsh\""
   touch "$conf"
+  replace_legacy_source "$conf" "source \"$ROOT/config/zsh-session-recovery.zsh\"" "$line"
   grep -Fqx "$line" "$conf" 2>/dev/null && return 0
   printf "\n%s\n" "$line" >>"$conf"
   echo "sourced tracked shell recovery config from $conf"
@@ -121,8 +146,8 @@ if [ "${1:-}" = "--activate" ]; then
   for label in com.aayush.tmux-autostart com.aayush.tmux-daily-resurrect-save com.aayush.tmux-periodic-resurrect-save com.aayush.moshi-cmux-groups; do
     if [ "$label" = "com.aayush.tmux-autostart" ] && launchctl print "$domain/$label" >/dev/null 2>&1; then
       # Reloading a RunAtLoad restore job while tmux is live would restore the
-      # same snapshot into the current server. The scripts are symlinked, so the
-      # loaded job will use this version on the next login without a reload.
+      # same snapshot into the current server. The loaded job execs the installed
+      # copies, so it uses this version on the next login without a reload.
       if command -v tmux >/dev/null 2>&1 && tmux has-session >/dev/null 2>&1; then
         server_pid=$(tmux display-message -p '#{pid}')
         tmux set-option -g @agent-session-boot-restore-state "$server_pid:complete"

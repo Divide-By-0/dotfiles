@@ -1,6 +1,8 @@
 # Agent session recovery on macOS
 
-This directory is the source of truth for the local cmux, tmux, Claude, Codex, Moshi, and launchd session-recovery glue. Installed files are symlinked back here where possible so fixes do not remain as untracked edits under the home directory.
+This directory is the source of truth for the local cmux, tmux, Claude, Codex, Moshi, and launchd session-recovery glue. Edit files here and re-run `./install.sh`; it installs **copies**, never symlinks back into this checkout.
+
+Why copies: this checkout lives under `~/Documents`, which macOS TCC gates per responsible process. The launchd-started tmux server (and every Moshi tab and cmux mirror it spawns) has no grant there, so each `open()` into this directory waits ~20 s on a TCC approval that never arrives and then fails with `Interrupted system call`. Python retries that forever, which left mirror panes blank. `tests/live_launchd_documents.py` reproduces it inside a throwaway launchd tmux server.
 
 ## What it fixes
 
@@ -74,7 +76,7 @@ sudo ./install-pty-capacity.sh
 tmux source-file ~/.tmux.conf
 ```
 
-The installer backs up a differing installed file before replacing it, symlinks executable sources, applies the tmux-resurrect patch only when it applies cleanly, adds source lines to `.tmux.conf` and `.zshrc`, renders all three LaunchAgents, and optionally reloads them. It never kills the running tmux server. Reloading the startup agent is safe: an already restored tmux server is marked and skipped.
+The installer backs up a differing installed file before replacing it, copies runtime files and config (config goes to `~/.config/agent-session-recovery/`), applies the tmux-resurrect patch only when it applies cleanly, adds (or repoints legacy) source lines in `.tmux.conf` and `.zshrc`, renders all three LaunchAgents, and optionally reloads them. It never kills the running tmux server. Reloading the startup agent is safe: an already restored tmux server is marked and skipped.
 
 Logs:
 
@@ -147,8 +149,6 @@ The system LaunchDaemon sets `kern.tty.ptmx_max=999` at boot. Its plist is a
 root-owned copy and runs only Apple's `/usr/sbin/sysctl`, never code in a user's
 writable checkout. `install-pty-capacity.sh` also applies the value immediately.
 
-The user-level readiness entry point is also installed as a copy in `~/.local/bin`
-to avoid launchd shell access failures on symlinks into protected Documents.
 
 Because launchd does not guarantee ordering between independent jobs, tmux boot
 restore and the Moshi LaunchAgent check the live kernel limit before creating
@@ -161,3 +161,14 @@ login apps. No reboot is performed by the installer.
 Verify with `sysctl kern.tty.ptmx_max`,
 `launchctl print system/com.aayush.pty-capacity`, and `/var/log/pty-capacity.log`.
 After reboot the tmux log must show `PTY capacity ready: 999` before startup.
+
+## Panes whose working directory is inside ~/Documents
+
+Installing copies keeps the recovery tooling itself out of `~/Documents`. A
+shell or agent the launchd tmux server starts *inside* `~/Documents` still needs
+tmux to hold Full Disk Access, because launchd makes tmux its own TCC-responsible
+process. Only a human can grant that: System Settings → Privacy & Security →
+Full Disk Access → add the real versioned binary (`readlink -f
+/opt/homebrew/bin/tmux`), then restart the tmux server. Re-grant after every
+`brew upgrade tmux`. `python3 tests/live_launchd_documents.py` checks both
+parts; `--skip-grant` checks only the installer's part.
