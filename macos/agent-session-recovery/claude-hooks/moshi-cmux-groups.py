@@ -96,6 +96,32 @@ def inventory():
     return rows
 
 
+IDLE_SHELLS = {'zsh', 'bash', 'sh', 'fish', 'login', 'secretty'}
+
+
+def pane_is_idle_shell(pane):
+    """True only if the pane's whole process tree is shells with nothing running.
+
+    Every pane here is secretty -> zsh, so pane_current_command alone cannot see
+    an agent started inside it; walk the real process tree instead.
+    """
+    root = tmux('display-message', '-p', '-t', pane, '#{pane_pid}', check=False).stdout.strip()
+    if not root.isdigit():
+        return False
+    children = {}
+    for line in command(['ps', '-A', '-o', 'pid=,ppid=,comm=']).stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3:
+            children.setdefault(parts[1], []).append((parts[0], parts[2]))
+    names = {os.path.basename(command(['ps', '-o', 'comm=', '-p', root], check=False).stdout.strip())}
+    todo = [root]
+    while todo:
+        for pid, comm in children.get(todo.pop(), []):
+            names.add(os.path.basename(comm))
+            todo.append(pid)
+    return all(name.lstrip('-') in IDLE_SHELLS for name in names)
+
+
 def adopt_new_windows(desired, rows, by_surface):
     """Turn a tab opened on the phone into a real cmux tab.
 
@@ -111,11 +137,13 @@ def adopt_new_windows(desired, rows, by_surface):
         group = by_key.get(row['group'])
         if not group or row['surface']:
             continue
-        # REASON: sync() creates each mirror window and only then sets its
-        # surface option, so a mirror whose option write failed looks unbound.
-        # Never mint a second cmux tab for a pane that is already a mirror.
-        started = tmux('display-message', '-p', '-t', row['pane'], '#{pane_start_command}', check=False).stdout
-        if 'moshi-cmux-mirror.py' in started:
+        # REASON: adoption replaces the pane's process with a mirror
+        # (respawn-pane -k), so only a pane that is nothing but an idle login
+        # shell may be adopted. On 2026-09-26 a Claude session the user had
+        # started in a phone-made tab was killed this way. A busy window is left
+        # alone, with no cmux tab, until its program exits. This also skips
+        # mirrors whose surface-option write failed (their process is python).
+        if not pane_is_idle_shell(row['pane']):
             continue
         created = cmux_rpc('surface.create', {'type': 'terminal', 'pane_id': group['pane_id'],
                                               'workspace_id': group['workspace_id'],

@@ -127,7 +127,7 @@ else:
         """A tab opened on the phone (plain tmux new-window) becomes a real cmux tab."""
         first=self.mod.sync(self.data)
         session=first['A'][2]['session']
-        wid,pid=self.tmux('new-window','-d','-P','-F','#{window_id} #{pane_id}','-t',session+':','sleep 120').split()
+        wid,pid=self.tmux('new-window','-d','-P','-F','#{window_id} #{pane_id}','-t',session+':','/bin/sh').split()
         adopted=self.mod.sync(self.data)
         calls=[json.loads(l) for l in (self.path/'calls.jsonl').read_text().splitlines()]
         creates=[json.loads(c[1]) for c in calls if c[0]=='surface.create']
@@ -146,6 +146,24 @@ else:
         creates=[l for l in (self.path/'calls.jsonl').read_text().splitlines() if 'surface.create' in l]
         self.assertEqual(len(creates),1)
         self.assertEqual(len(self.tmux('list-windows','-t',session+':','-F','#{window_id}').split()),3)
+
+    def test_busy_phone_window_is_never_adopted_or_killed(self):
+        """2026-09-26: a Claude started in a phone-made tab was killed by adoption.
+
+        Only an idle shell may be replaced by a mirror; a window running anything
+        else keeps its process, and no cmux tab is created for it.
+        """
+        first=self.mod.sync(self.data)
+        session=first['A'][2]['session']
+        wid,pid=self.tmux('new-window','-d','-P','-F','#{window_id} #{pane_id}','-t',session+':',
+                          '/bin/sh -c "sleep 120"').split()
+        time.sleep(0.3)
+        busy_pid=self.tmux('display-message','-p','-t',pid,'#{pane_pid}')
+        self.mod.sync(self.data)
+        calls=(self.path/'calls.jsonl').read_text() if (self.path/'calls.jsonl').exists() else ''
+        self.assertNotIn('surface.create',calls)
+        self.assertEqual(self.tmux('display-message','-p','-t',pid,'#{pane_pid} #{pane_dead}'),busy_pid+' 0')
+        self.assertEqual(self.tmux('show-options','-wqv','-t',wid,self.mod.SURFACE),'')
 
     def test_hook_runs_in_correct_grouped_pane(self):
         bindings=self.mod.sync(self.data)

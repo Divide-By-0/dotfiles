@@ -123,6 +123,9 @@ stay the same. cmux inserts the tab after its selected tab, so the tmux window
 may move to that position on the next sync. An `after-new-window` hook runs the
 sync immediately rather than at the next 15-second poll. Closing a window on
 the phone does not close the cmux tab; the next sync restores the mirror.
+Only a window that is an idle shell is adopted: a window already running
+something (for example Claude started in a phone tab) is never replaced and
+gets no cmux tab while it runs.
 
 `install.sh --activate` installs `com.aayush.moshi-cmux-groups`, which reconciles
 cmux topology every 15 seconds. Hook events also reconcile before enqueuing.
