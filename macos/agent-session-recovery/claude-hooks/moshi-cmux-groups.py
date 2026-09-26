@@ -37,9 +37,13 @@ def tmux(*args, check=True):
     return command(cmd + list(args), check=check)
 
 
-def tree():
+def cmux_rpc(method, params):
     exe = os.environ.get('CMUX_BIN') or shutil.which('cmux') or '/opt/homebrew/bin/cmux'
-    data = json.loads(command([exe, 'rpc', 'system.tree', '{}']).stdout)
+    return json.loads(command([exe, 'rpc', method, json.dumps(params)]).stdout)
+
+
+def tree():
+    data = cmux_rpc('system.tree', {})
     if not isinstance(data.get('windows'), list):
         raise ValueError('cmux returned no authoritative window list')
     return data
@@ -92,6 +96,45 @@ def inventory():
     return rows
 
 
+def adopt_new_windows(desired, rows, by_surface):
+    """Turn a tab opened on the phone into a real cmux tab.
+
+    A window in one of our sessions without a surface binding was created by a
+    tmux client (Moshi's new-tab, prefix+c), not by this bridge. Create a cmux
+    terminal tab in the same cmux pane and bind that window to it, keeping the
+    window and pane IDs the phone is already looking at. Returns the pane IDs
+    whose shells must be replaced by the new surface's mirror.
+    """
+    by_key = {g['key']: g for g in desired}
+    respawn = set()
+    for row in rows:
+        group = by_key.get(row['group'])
+        if not group or row['surface']:
+            continue
+        # REASON: sync() creates each mirror window and only then sets its
+        # surface option, so a mirror whose option write failed looks unbound.
+        # Never mint a second cmux tab for a pane that is already a mirror.
+        started = tmux('display-message', '-p', '-t', row['pane'], '#{pane_start_command}', check=False).stdout
+        if 'moshi-cmux-mirror.py' in started:
+            continue
+        created = cmux_rpc('surface.create', {'type': 'terminal', 'pane_id': group['pane_id'],
+                                              'workspace_id': group['workspace_id'],
+                                              'window_id': group['window_id'], 'focus': False})
+        sid = created.get('surface_id')
+        if not sid:
+            raise ValueError('cmux surface.create returned no surface_id')
+        # The tree was read before this tab existed; append it so this same pass
+        # binds it at the end of the strip, where cmux and tmux both put new tabs.
+        group['surfaces'].append(dict(id=sid, title=row['title'] or 'terminal', type='terminal',
+                                      index_in_pane=len(group['surfaces'])))
+        tmux('set-option', '-w', '-t', row['window'], SURFACE, sid)
+        tmux('set-option', '-w', '-t', row['window'], 'automatic-rename', 'off')
+        row['surface'] = sid
+        by_surface[sid] = row
+        respawn.add(row['pane'])
+    return respawn
+
+
 def sync(data):
     desired = groups(data)
     rows = inventory()
@@ -104,6 +147,7 @@ def sync(data):
                 if row['surface'] in by_surface:
                     raise RuntimeError('duplicate owned surface windows; refusing ambiguous repair')
                 by_surface[row['surface']] = row
+    respawn = adopt_new_windows(desired, rows, by_surface)
     valid = {s['id'] for g in desired for s in g['surfaces']}
     bindings = {}
     for group in desired:
@@ -171,8 +215,8 @@ def sync(data):
                 tmux('set-option', '-w', '-t', row['window'], 'automatic-rename', 'off')
             if row['title'] != surface['title']:
                 tmux('rename-window', '-t', row['window'], surface['title'] or 'terminal')
-            if row['dead'] == '1':
-                tmux('respawn-pane', '-t', row['pane'], start)
+            if row['dead'] == '1' or row['pane'] in respawn:
+                tmux('respawn-pane', '-k', '-t', row['pane'], start)
             state.update(tmux_session=next((r['name'] for r in rows if r['session'] == session), group['name']),
                          tmux_pane=row['pane'], tmux_window=row['window'])
             atomic(path, state)

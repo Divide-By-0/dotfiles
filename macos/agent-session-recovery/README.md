@@ -114,6 +114,16 @@ Claude hooks run inside the matching mirror pane so approval/result bindings
 retain a real, stable tmux pane ID. Plain terminals and Codex TUIs are also
 viewable and controllable, without adding or replacing Codex notification hooks.
 
+**New tabs made on the phone become real cmux tabs.** A window opened in a
+`cmux-` session by a tmux client (Moshi's new tab, prefix+c) has no surface
+binding. The bridge then calls cmux `surface.create` (terminal, same cmux pane,
+no focus change on the desktop), binds that window to the new tab, and replaces
+its shell with the tab's mirror. The window and pane IDs the phone is looking at
+stay the same. cmux inserts the tab after its selected tab, so the tmux window
+may move to that position on the next sync. An `after-new-window` hook runs the
+sync immediately rather than at the next 15-second poll. Closing a window on
+the phone does not close the cmux tab; the next sync restores the mirror.
+
 `install.sh --activate` installs `com.aayush.moshi-cmux-groups`, which reconciles
 cmux topology every 15 seconds. Hook events also reconcile before enqueuing.
 Reconciliation uses a shared filesystem lock, atomic metadata writes, and

@@ -42,6 +42,18 @@ root=Path(os.environ['FAKE_CMUX_ROOT'])
 method=sys.argv[2]
 if method=='system.tree':
  print((root/'tree.json').read_text())
+elif method=='surface.create':
+ params=json.loads(sys.argv[3])
+ with (root/'calls.jsonl').open('a') as f: f.write(json.dumps(sys.argv[2:])+'\\n')
+ tree=json.loads((root/'tree.json').read_text())
+ sid='NEW%d'%sum(1 for _ in (root/'calls.jsonl').open())
+ for w in tree['windows']:
+  for ws in w['workspaces']:
+   for pane in ws['panes']:
+    if pane['id']==params['pane_id']:
+     pane['surfaces'].append(dict(id=sid,title='Terminal',index_in_pane=len(pane['surfaces']),type='terminal'))
+ (root/'tree.json').write_text(json.dumps(tree))
+ print(json.dumps({'surface_id':sid,'pane_id':params['pane_id']}))
 else:
  with (root/'calls.jsonl').open('a') as f: f.write(json.dumps(sys.argv[2:])+'\\n')
  print(json.dumps({'render_grid':{'render_revision':1,'row_spans':[{'row':0,'column':0,'text':'MIRROR-TEST'}]}}))
@@ -110,6 +122,30 @@ else:
         changed=self.mod.sync(self.data)
         self.assertNotIn('D',changed)
         self.assertEqual(self.tmux('display-message','-p','-t','unrelated:','#{session_name}'),'unrelated')
+
+    def test_tmux_new_window_in_group_creates_cmux_tab(self):
+        """A tab opened on the phone (plain tmux new-window) becomes a real cmux tab."""
+        first=self.mod.sync(self.data)
+        session=first['A'][2]['session']
+        wid,pid=self.tmux('new-window','-d','-P','-F','#{window_id} #{pane_id}','-t',session+':','sleep 120').split()
+        adopted=self.mod.sync(self.data)
+        calls=[json.loads(l) for l in (self.path/'calls.jsonl').read_text().splitlines()]
+        creates=[json.loads(c[1]) for c in calls if c[0]=='surface.create']
+        self.assertEqual(len(creates),1)
+        self.assertEqual({k:creates[0][k] for k in ('type','pane_id','workspace_id','window_id','focus')},
+                         {'type':'terminal','pane_id':'P1','workspace_id':'WS1','window_id':'W1','focus':False})
+        new_sid=next(s for s in adopted if s.startswith('NEW'))
+        # Same window and pane the phone is looking at, now bound and mirroring the new surface.
+        self.assertEqual(adopted[new_sid][2]['window'],wid)
+        self.assertEqual(adopted[new_sid][2]['pane'],pid)
+        self.assertEqual(self.tmux('show-options','-wqv','-t',wid,self.mod.SURFACE),new_sid)
+        self.assertIn('moshi-cmux-mirror.py',self.tmux('display-message','-p','-t',pid,'#{pane_start_command}'))
+        # cmux's tree now contains the tab; later syncs neither create again nor duplicate windows.
+        self.data=json.loads((self.path/'tree.json').read_text())
+        self.mod.sync(self.data)
+        creates=[l for l in (self.path/'calls.jsonl').read_text().splitlines() if 'surface.create' in l]
+        self.assertEqual(len(creates),1)
+        self.assertEqual(len(self.tmux('list-windows','-t',session+':','-F','#{window_id}').split()),3)
 
     def test_hook_runs_in_correct_grouped_pane(self):
         bindings=self.mod.sync(self.data)
