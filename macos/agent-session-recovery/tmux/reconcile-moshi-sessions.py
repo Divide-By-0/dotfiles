@@ -155,7 +155,9 @@ def main() -> int:
     )
     title_py = Path(
         os.environ.get("MOSHI_TITLE_PY")
-        or Path(__file__).resolve().parents[1] / "claude-hooks/moshi-cmux-title.py"
+        # install.sh copies (not symlinks) runtime files out of ~/Documents, so the
+        # formatter is found at its installed path, not relative to this file.
+        or Path.home() / ".claude/hooks/moshi-cmux-title.py"
     )
     formatter = load_formatter(title_py)
 
