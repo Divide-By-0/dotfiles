@@ -21,8 +21,13 @@ Moshi mirrors report the visible phone pane's width and height to cmux using
 `client_id`, `viewport_columns`, and `viewport_rows` on `terminal.replay`.
 Ghostty reflows the terminal and sends the running application SIGWINCH, as with
 native tmux resizing. Oversized frames are skipped while resizing instead of
-being cropped. Switching away, disconnecting, or stopping the mirror releases
-its viewport; replay reports also expire if the mirror crashes. Other clients'
+being cropped. The phone size is held while you swipe between tabs and released only when
+no tmux client is attached, when the phone has sent no input for 5 minutes
+(Moshi left in the background stays attached), or 5 minutes after the tab was
+last on screen. Replay reports also expire if the mirror crashes. Why: every
+desktop resize makes Claude Code reprint its whole conversation into the cmux
+scrollback. Releasing on every swipe stacked ~40 phone-width copies in one tab
+(2026-09-28), which looked like corrupted output when scrolling up in cmux. Other clients'
 viewport reports remain independent.
 
 Moshi needs a tmux pane through which it can mirror a cmux terminal. These helper sessions use the human tab title plus the agent directory basename:

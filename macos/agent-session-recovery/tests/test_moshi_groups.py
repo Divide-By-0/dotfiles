@@ -297,9 +297,12 @@ else:
         os.write(master,b'\x02p')
         wait_for(lambda:self.tmux('display-message','-p','-t',a['session'],'#{pane_id}')==a['pane'])
         wait_for(lambda:'MIRROR-TEST' in self.tmux('capture-pane','-p','-t',a['pane']))
-        wait_for(lambda:cleared('B'))
-        os.write(master,b'\x02d')
-        wait_for(lambda:cleared('A'))
+        # Swiping away holds the phone width: releasing it on every swipe made
+        # Claude reprint its conversation into the desktop scrollback each time.
+        time.sleep(2)
+        self.assertFalse(cleared('B'))
+        os.write(master,b'\x02d')  # phone gone: release every held viewport
+        wait_for(lambda:cleared('A') and cleared('B'))
 
     def test_phone_wheel_scrolls_mirror_through_cmux_scrollback(self):
         """A vertical swipe (SGR wheel via tmux mouse mode) shows cmux scrollback."""

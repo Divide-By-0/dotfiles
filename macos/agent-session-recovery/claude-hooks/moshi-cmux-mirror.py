@@ -395,30 +395,64 @@ def forward_key(surface_id: str, key: bytes) -> None:
     send_text(surface_id, text)
 
 
-def session_attached(visibility_path: Path | None = None) -> bool:
-    """Only the pane actually visible to an attached client owns the viewport.
+# REASON: every desktop resize makes Claude Code reprint its whole conversation
+# into the cmux scrollback. Releasing the phone width on every swipe stacked ~40
+# phone-width copies in one tab (2026-09-28), which read as corrupted output
+# when scrolling up in cmux. Hold the width across swipes; release only when
+# the phone is gone or has sent no input for PHONE_IDLE_SECONDS.
+PHONE_IDLE_SECONDS = 300  # Moshi in the background keeps its tmux client attached
+HOLD_SECONDS = 300
 
+
+def viewport_action(now: float, visible: bool, active: bool, last_visible: float | None) -> str:
+    """'paint' this pane, 'hold' its phone-size viewport, or 'release' it."""
+    if visible:
+        return "paint"
+    if active and last_visible is not None and now - last_visible < HOLD_SECONDS:
+        return "hold"
+    return "release"
+
+
+def phone_state(visibility_path: Path | None = None) -> tuple[bool, bool]:
+    """(this pane is on a phone screen, a phone sent input recently).
+
+    Only the pane actually visible to an attached client owns the viewport.
     Session-attached is insufficient with sibling windows: every background
     mirror would otherwise resize and redraw its desktop surface on each swipe.
     Explicit pane targeting also survives moving windows between sessions.
     """
     pane = os.environ.get("TMUX_PANE")
     if not os.environ.get("TMUX"):
-        return True
+        return True, True
     if not pane:
-        return False
+        return False, False
+    panes: list[str] | None = None
+    activity = None
     if visibility_path is not None:
         sample = load_state(visibility_path)
         if time.time() - sample.get("updated", 0) < 2:
-            return pane in sample.get("panes", [])
-    try:
-        visible = subprocess.check_output(
-            ["tmux", "list-clients", "-F", "#{pane_id}"],
-            text=True, timeout=3, stderr=subprocess.DEVNULL,
-        ).splitlines()
-        return pane in visible
-    except (subprocess.SubprocessError, OSError):
-        return False
+            panes = sample.get("panes", [])
+            activity = sample.get("activity")
+    if panes is None:
+        try:
+            rows = subprocess.check_output(
+                ["tmux", "list-clients", "-F", "#{pane_id} #{client_activity}"],
+                text=True, timeout=3, stderr=subprocess.DEVNULL,
+            ).split("\n")
+        except (subprocess.SubprocessError, OSError):
+            return False, False
+        rows = [r.split() for r in rows if r.strip()]
+        panes = [r[0] for r in rows]
+        activity = max((int(r[1]) for r in rows if len(r) > 1 and r[1].isdigit()), default=0)
+    if not panes:
+        return False, False
+    # Older samples carry no activity; treat any attached client as in use.
+    active = activity is None or time.time() - float(activity) < PHONE_IDLE_SECONDS
+    return active and pane in panes, active
+
+
+def session_attached(visibility_path: Path | None = None) -> bool:
+    return phone_state(visibility_path)[0]
 
 
 def refresh_names(state: dict, state_path: Path) -> None:
@@ -568,6 +602,8 @@ def main() -> int:
     viewport_surface = None
     cols = rows = 0
     key_buf = bytearray()
+    last_visible: float | None = None
+    last_hold_refresh = 0.0
     scroll_offset = 0  # lines above live output; 0 means mirroring live
     scroll_dirty = False
     active_interval = 1.0 / max(args.fps, 1.0)
@@ -598,19 +634,19 @@ def main() -> int:
                 last_name_refresh = now
 
             visibility_path = state_path.parent / "visibility.json" if state.get("grouped") else None
-            attached = session_attached(visibility_path)
+            attached, phone_active = phone_state(visibility_path)
+            if attached:
+                last_visible = now
+            action = viewport_action(now, attached, phone_active, last_visible)
 
-            # Phone disconnected: stop resizing/mirroring immediately so the
-            # desktop cmux tab stops flashing.
+            # Off the phone screen: stop painting. The desktop viewport is held
+            # or released below, not dropped here (see viewport_action).
             if was_attached and not attached:
-                if viewport_surface:
-                    clear_viewport(viewport_surface)
-                    viewport_surface = None
                 winch["flag"] = False
                 last_rev = last_epoch = last_seq = None
                 draw_idle_status(state)
                 last_idle_draw = now
-                log(f"mirror idle (detached) surface={surface_id}")
+                log(f"mirror idle (not visible) surface={surface_id}")
 
             if attached and not was_attached:
                 winch["flag"] = True
@@ -618,7 +654,16 @@ def main() -> int:
             was_attached = attached
 
             if not attached:
-                # Idle: never call terminal.replay / terminal.viewport.
+                if action == "hold" and viewport_surface:
+                    # Replay reports expire unless refreshed; keep the phone size
+                    # alive without painting so a swipe back needs no resize.
+                    if now - last_hold_refresh >= 2:
+                        replay_viewport(viewport_surface, cols, rows)
+                        last_hold_refresh = now
+                elif viewport_surface:
+                    clear_viewport(viewport_surface)
+                    log(f"mirror released desktop size surface={viewport_surface}")
+                    viewport_surface = None
                 if now - last_idle_draw >= 30:
                     draw_idle_status(state)
                     last_idle_draw = now

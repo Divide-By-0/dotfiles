@@ -342,8 +342,12 @@ def main():
         until = time.monotonic() + 15
         while time.monotonic() < until:
             try:
-                clients = tmux('list-clients', '-F', '#{pane_id}', check=False)
-                atomic(STATE / 'visibility.json', {'updated': time.time(), 'panes': clients.stdout.splitlines()})
+                clients = tmux('list-clients', '-F', '#{pane_id} #{client_activity}', check=False)
+                rows = [line.split() for line in clients.stdout.splitlines() if line.strip()]
+                # activity = newest input from any client; mirrors treat a phone
+                # with no input for 5 min (Moshi backgrounded) as gone.
+                activity = max((int(r[1]) for r in rows if len(r) > 1 and r[1].isdigit()), default=0)
+                atomic(STATE / 'visibility.json', {'updated': time.time(), 'panes': [r[0] for r in rows], 'activity': activity})
             except (OSError, subprocess.SubprocessError):
                 pass  # mirrors fall back to a direct read when the sample is stale
             time.sleep(.25)
