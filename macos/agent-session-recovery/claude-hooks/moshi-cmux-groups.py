@@ -87,12 +87,12 @@ def load(path):
 
 def inventory():
     result = tmux('list-windows', '-a', '-F',
-                  '#{session_id}\t#{session_name}\t#{'+OWNER+'}\t#{window_id}\t#{window_index}\t#{'+SURFACE+'}\t#{pane_id}\t#{pane_dead}\t#{window_name}', check=False)
+                  '#{session_id}\t#{session_name}\t#{'+OWNER+'}\t#{window_id}\t#{window_index}\t#{'+SURFACE+'}\t#{pane_id}\t#{pane_dead}\t#{remain-on-exit}\t#{window_name}', check=False)
     rows = []
     for line in result.stdout.splitlines():
         fields = line.split('\t')
-        if len(fields) == 9:
-            rows.append(dict(zip(['session', 'name', 'group', 'window', 'index', 'surface', 'pane', 'dead', 'title'], fields)))
+        if len(fields) == 10:
+            rows.append(dict(zip(['session', 'name', 'group', 'window', 'index', 'surface', 'pane', 'dead', 'keep', 'title'], fields)))
     return rows
 
 
@@ -241,6 +241,13 @@ def sync(data):
             if fresh:
                 tmux('set-option', '-w', '-t', row['window'], SURFACE, sid)
                 tmux('set-option', '-w', '-t', row['window'], 'automatic-rename', 'off')
+            # REASON: remain-on-exit is a window option. The session-level
+            # set-option above only reaches the session's first window, so every
+            # other mirror window closed when its mirror exited and came back with
+            # a new ID under the phone (42 of 51 on 2026-09-27). Keep each window.
+            if row.get('keep') != 'on':
+                tmux('set-option', '-w', '-t', row['window'], 'remain-on-exit', 'on')
+                row['keep'] = 'on'
             if row['title'] != surface['title']:
                 tmux('rename-window', '-t', row['window'], surface['title'] or 'terminal')
             if row['dead'] == '1' or row['pane'] in respawn:
@@ -285,7 +292,18 @@ def main():
                 print(json.dumps([{'session': g['name'], 'tabs': len(g['surfaces'])} for g in groups(data)], indent=2))
                 return 0
             with (STATE / '.lock').open('w') as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
+                if args.watch or args.hook:
+                    fcntl.flock(lock, fcntl.LOCK_EX)
+                else:
+                    # REASON: plain one-shot runs come from the after-new-window
+                    # hook, which also fires for the windows sync() itself creates.
+                    # Queueing them on the lock piled up ~25 waiting syncs on
+                    # 2026-09-27. A running sync (or the 15 s daemon) covers the
+                    # new window, so skip instead of waiting.
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        return 0
                 data = tree()
                 bindings = sync(data)
                 if args.hook:

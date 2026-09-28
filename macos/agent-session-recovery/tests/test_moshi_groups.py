@@ -42,6 +42,9 @@ root=Path(os.environ['FAKE_CMUX_ROOT'])
 method=sys.argv[2]
 if method=='system.tree':
  print((root/'tree.json').read_text())
+elif method=='surface.read_text':
+ with (root/'calls.jsonl').open('a') as f: f.write(json.dumps(sys.argv[2:])+'\\n')
+ print(json.dumps({'text':'\\n'.join('HISTORY %d' % i for i in range(200))+'\\n'}))
 elif method=='surface.create':
  params=json.loads(sys.argv[3])
  with (root/'calls.jsonl').open('a') as f: f.write(json.dumps(sys.argv[2:])+'\\n')
@@ -165,6 +168,33 @@ else:
         self.assertEqual(self.tmux('display-message','-p','-t',pid,'#{pane_pid} #{pane_dead}'),busy_pid+' 0')
         self.assertEqual(self.tmux('show-options','-wqv','-t',wid,self.mod.SURFACE),'')
 
+    def test_exited_mirror_keeps_its_window_in_every_position(self):
+        """remain-on-exit must hold for every window, not only a session's first.
+
+        2026-09-27: restarting mirrors closed 42 of 51 windows (only index 0 had
+        the option), so they came back with new IDs under the phone.
+        """
+        first=self.mod.sync(self.data)
+        wid,pid=first['B'][2]['window'],first['B'][2]['pane']
+        self.assertNotEqual(self.tmux('display-message','-p','-t',wid,'#{window_index}'),'0')
+        self.tmux('respawn-pane','-k','-t',pid,'true')
+        time.sleep(0.5)
+        self.assertEqual(self.tmux('display-message','-p','-t',pid,'#{window_id} #{pane_dead}'),wid+' 1')
+        again=self.mod.sync(self.data)
+        self.assertEqual((again['B'][2]['window'],again['B'][2]['pane']),(wid,pid))
+
+    def test_one_shot_sync_skips_instead_of_queueing_on_the_lock(self):
+        """Hook-launched syncs must not pile up behind a running sync."""
+        import fcntl
+        with (self.mod.STATE/'.lock').open('w') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            start=time.monotonic()
+            result=subprocess.run([sys.executable,str(ROOT/'claude-hooks/moshi-cmux-groups.py')],
+                                  capture_output=True,text=True,timeout=20)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertLess(time.monotonic()-start,5)
+        self.assertEqual([r for r in self.mod.inventory() if r['group']],[])
+
     def test_hook_runs_in_correct_grouped_pane(self):
         bindings=self.mod.sync(self.data)
         env=os.environ.copy();env['CMUX_SURFACE_ID']='B'
@@ -270,6 +300,41 @@ else:
         wait_for(lambda:cleared('B'))
         os.write(master,b'\x02d')
         wait_for(lambda:cleared('A'))
+
+    def test_phone_wheel_scrolls_mirror_through_cmux_scrollback(self):
+        """A vertical swipe (SGR wheel via tmux mouse mode) shows cmux scrollback."""
+        bindings=self.mod.sync(self.data)
+        a=bindings['A'][2]
+        self.tmux('set','-g','mouse','on')
+        # The binding shipped in config/tmux-session-recovery.conf.
+        conf=(ROOT/'config/tmux-session-recovery.conf').read_text()
+        wheel=next(l for l in conf.splitlines() if l.startswith('bind -T root WheelUpPane'))
+        subprocess.run(['tmux','-L',self.socket,'source-file','-'],input=wheel+'\n',text=True,check=True)
+        self.tmux('select-window','-t',a['window'])
+        master,slave=pty.openpty()
+        termios.tcsetwinsize(slave,(30,37))
+        proc=subprocess.Popen(['tmux','-L',self.socket,'attach-session','-t',a['session']],stdin=slave,stdout=slave,stderr=slave,env=os.environ.copy())
+        os.close(slave);self.clients.append((proc,master))
+        def wait_for(predicate,what):
+            deadline=time.monotonic()+8
+            while time.monotonic()<deadline:
+                if select.select([master],[],[],.1)[0]:
+                    try: os.read(master,65536)
+                    except OSError as exc:
+                        if exc.errno!=errno.EIO: raise
+                if predicate(): return
+            self.fail('timed out waiting for '+what)
+        wait_for(lambda:'MIRROR-TEST' in self.tmux('capture-pane','-p','-t',a['pane']),'live mirror')
+        wait_for(lambda:self.tmux('display-message','-p','-t',a['pane'],'#{mouse_any_flag}')=='1','mouse reporting')
+        os.write(master,b'\x1b[<64;5;5M')  # what the phone's terminal sends for wheel-up
+        wait_for(lambda:'scrollback -3' in self.tmux('capture-pane','-p','-t',a['pane']),'scrollback view')
+        screen=self.tmux('capture-pane','-p','-t',a['pane'])
+        self.assertIn('HISTORY 196',screen)  # 3 lines above the bottom of 200
+        self.assertEqual(self.tmux('display-message','-p','-t',a['pane'],'#{pane_in_mode}'),'0')
+        os.write(master,b'\x1b[<65;5;5M')
+        wait_for(lambda:'MIRROR-TEST' in self.tmux('capture-pane','-p','-t',a['pane']),'return to live')
+        sent=[l for l in (self.path/'calls.jsonl').read_text().splitlines() if 'send_text' in l or 'send_key' in l]
+        self.assertEqual(sent,[])  # nothing typed into the cmux terminal
 
     def test_stale_desktop_grid_waits_for_reflow(self):
         mirror=load('moshi-cmux-mirror')

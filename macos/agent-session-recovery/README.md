@@ -185,3 +185,14 @@ Full Disk Access → add the real versioned binary (`readlink -f
 /opt/homebrew/bin/tmux`), then restart the tmux server. Re-grant after every
 `brew upgrade tmux`. `python3 tests/live_launchd_documents.py` checks both
 parts; `--skip-grant` checks only the installer's part.
+
+## Scrolling a mirror from the phone
+
+Mirror panes draw on the alternate screen, so tmux copy-mode has no history
+for them. The mirror turns on mouse reporting; with `mouse on`, the
+`WheelUpPane` binding in `config/tmux-session-recovery.conf` forwards the wheel
+to it, and the mirror shows the cmux tab's own scrollback
+(`surface.read_text`) with a status row. Scroll down to the bottom, or type,
+to return to live output (the typed key is also sent to cmux). Taps and drags
+are ignored rather than typed. Do not add a `WheelUpPane` binding in
+`~/.tmux.conf`: it is read after this config and would override it.

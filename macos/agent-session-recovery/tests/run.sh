@@ -230,3 +230,5 @@ PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_moshi_groups.py" -v
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_pty_capacity.py" -v
 
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_install_outside_documents.py" -v
+
+PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_mirror_scroll.py" -v
