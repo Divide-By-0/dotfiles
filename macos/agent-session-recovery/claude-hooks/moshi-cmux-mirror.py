@@ -430,9 +430,13 @@ def phone_state(visibility_path: Path | None = None) -> tuple[bool, bool]:
     activity = None
     if visibility_path is not None:
         sample = load_state(visibility_path)
-        if time.time() - sample.get("updated", 0) < 2:
-            panes = sample.get("panes", [])
-            activity = sample.get("activity")
+        # The watcher owns grouped visibility. A slow/dead watcher must not
+        # turn 96 idle mirrors into 96 tmux subprocesses every polling round.
+        # Fail idle until a fresh sample arrives, including on first startup.
+        if time.time() - sample.get("updated", 0) >= 2:
+            return False, False
+        panes = sample.get("panes", [])
+        activity = sample.get("activity")
     if panes is None:
         try:
             rows = subprocess.check_output(
@@ -668,12 +672,9 @@ def main() -> int:
                     draw_idle_status(state)
                     last_idle_draw = now
                 drain_queue(queue_dir)
-                # Discard any stray stdin so it does not buffer forever.
-                while select.select([sys.stdin], [], [], 0)[0]:
-                    chunk = os.read(sys.stdin.fileno(), 1024)
-                    if not chunk:
-                        stop = True
-                        break
+                # tmux only sends input to the selected pane. Keep it queued
+                # until shared visibility catches up after a swipe; discarding
+                # here loses the first key typed on a newly visible phone tab.
                 time.sleep(.25 if visibility_path and visibility_path.exists() else idle_interval)
                 continue
 
