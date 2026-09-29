@@ -11,6 +11,15 @@
 	<array>
 		<string>__HOME__/.local/bin/tmux-autostart-restore.sh</string>
 	</array>
+	<!-- REASON: without ProcessType, launchd spawns this job as a "daemon" at
+	     background priority (20, not 31), and every process inside the tmux
+	     server inherits it: all restored Claude/Codex sessions and every Moshi
+	     tab. Under load they barely got CPU. Starved codex resumes held Codex's
+	     shared log-DB write lock, so new Codex launches waited minutes on
+	     "model: loading" (2026-09-28: load 461, 297 processes at pri 20).
+	     Interactive gives normal app priority (verified: pri 31). -->
+	<key>ProcessType</key>
+	<string>Interactive</string>
 	<key>RunAtLoad</key>
 	<true/>
 	<!-- REASON: launchd starts processes with cwd=/ by default, so the tmux SERVER

@@ -21,8 +21,13 @@ Moshi mirrors report the visible phone pane's width and height to cmux using
 `client_id`, `viewport_columns`, and `viewport_rows` on `terminal.replay`.
 Ghostty reflows the terminal and sends the running application SIGWINCH, as with
 native tmux resizing. Oversized frames are skipped while resizing instead of
-being cropped. Switching away, disconnecting, or stopping the mirror releases
-its viewport; replay reports also expire if the mirror crashes. Other clients'
+being cropped. The phone size is held while you swipe between tabs and released only when
+no tmux client is attached, when the phone has sent no input for 5 minutes
+(Moshi left in the background stays attached), or 5 minutes after the tab was
+last on screen. Replay reports also expire if the mirror crashes. Why: every
+desktop resize makes Claude Code reprint its whole conversation into the cmux
+scrollback. Releasing on every swipe stacked ~40 phone-width copies in one tab
+(2026-09-28), which looked like corrupted output when scrolling up in cmux. Other clients'
 viewport reports remain independent.
 
 Moshi needs a tmux pane through which it can mirror a cmux terminal. These helper sessions use the human tab title plus the agent directory basename:
@@ -114,6 +119,19 @@ Claude hooks run inside the matching mirror pane so approval/result bindings
 retain a real, stable tmux pane ID. Plain terminals and Codex TUIs are also
 viewable and controllable, without adding or replacing Codex notification hooks.
 
+**New tabs made on the phone become real cmux tabs.** A window opened in a
+`cmux-` session by a tmux client (Moshi's new tab, prefix+c) has no surface
+binding. The bridge then calls cmux `surface.create` (terminal, same cmux pane,
+no focus change on the desktop), binds that window to the new tab, and replaces
+its shell with the tab's mirror. The window and pane IDs the phone is looking at
+stay the same. cmux inserts the tab after its selected tab, so the tmux window
+may move to that position on the next sync. An `after-new-window` hook runs the
+sync immediately rather than at the next 15-second poll. Closing a window on
+the phone does not close the cmux tab; the next sync restores the mirror.
+Only a window that is an idle shell is adopted: a window already running
+something (for example Claude started in a phone tab) is never replaced and
+gets no cmux tab while it runs.
+
 `install.sh --activate` installs `com.aayush.moshi-cmux-groups`, which reconciles
 cmux topology every 15 seconds. Hook events also reconcile before enqueuing.
 Reconciliation uses a shared filesystem lock, atomic metadata writes, and
@@ -172,3 +190,14 @@ Full Disk Access → add the real versioned binary (`readlink -f
 /opt/homebrew/bin/tmux`), then restart the tmux server. Re-grant after every
 `brew upgrade tmux`. `python3 tests/live_launchd_documents.py` checks both
 parts; `--skip-grant` checks only the installer's part.
+
+## Scrolling a mirror from the phone
+
+Mirror panes draw on the alternate screen, so tmux copy-mode has no history
+for them. The mirror turns on mouse reporting; with `mouse on`, the
+`WheelUpPane` binding in `config/tmux-session-recovery.conf` forwards the wheel
+to it, and the mirror shows the cmux tab's own scrollback
+(`surface.read_text`) with a status row. Scroll down to the bottom, or type,
+to return to live output (the typed key is also sent to cmux). Taps and drags
+are ignored rather than typed. Do not add a `WheelUpPane` binding in
+`~/.tmux.conf`: it is read after this config and would override it.

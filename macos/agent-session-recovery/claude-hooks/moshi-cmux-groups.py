@@ -37,9 +37,13 @@ def tmux(*args, check=True):
     return command(cmd + list(args), check=check)
 
 
-def tree():
+def cmux_rpc(method, params):
     exe = os.environ.get('CMUX_BIN') or shutil.which('cmux') or '/opt/homebrew/bin/cmux'
-    data = json.loads(command([exe, 'rpc', 'system.tree', '{}']).stdout)
+    return json.loads(command([exe, 'rpc', method, json.dumps(params)]).stdout)
+
+
+def tree():
+    data = cmux_rpc('system.tree', {})
     if not isinstance(data.get('windows'), list):
         raise ValueError('cmux returned no authoritative window list')
     return data
@@ -83,13 +87,80 @@ def load(path):
 
 def inventory():
     result = tmux('list-windows', '-a', '-F',
-                  '#{session_id}\t#{session_name}\t#{'+OWNER+'}\t#{window_id}\t#{window_index}\t#{'+SURFACE+'}\t#{pane_id}\t#{pane_dead}\t#{window_name}', check=False)
+                  '#{session_id}\t#{session_name}\t#{'+OWNER+'}\t#{window_id}\t#{window_index}\t#{'+SURFACE+'}\t#{pane_id}\t#{pane_dead}\t#{remain-on-exit}\t#{window_name}', check=False)
     rows = []
     for line in result.stdout.splitlines():
         fields = line.split('\t')
-        if len(fields) == 9:
-            rows.append(dict(zip(['session', 'name', 'group', 'window', 'index', 'surface', 'pane', 'dead', 'title'], fields)))
+        if len(fields) == 10:
+            rows.append(dict(zip(['session', 'name', 'group', 'window', 'index', 'surface', 'pane', 'dead', 'keep', 'title'], fields)))
     return rows
+
+
+IDLE_SHELLS = {'zsh', 'bash', 'sh', 'fish', 'login', 'secretty'}
+
+
+def pane_is_idle_shell(pane):
+    """True only if the pane's whole process tree is shells with nothing running.
+
+    Every pane here is secretty -> zsh, so pane_current_command alone cannot see
+    an agent started inside it; walk the real process tree instead.
+    """
+    root = tmux('display-message', '-p', '-t', pane, '#{pane_pid}', check=False).stdout.strip()
+    if not root.isdigit():
+        return False
+    children = {}
+    for line in command(['ps', '-A', '-o', 'pid=,ppid=,comm=']).stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3:
+            children.setdefault(parts[1], []).append((parts[0], parts[2]))
+    names = {os.path.basename(command(['ps', '-o', 'comm=', '-p', root], check=False).stdout.strip())}
+    todo = [root]
+    while todo:
+        for pid, comm in children.get(todo.pop(), []):
+            names.add(os.path.basename(comm))
+            todo.append(pid)
+    return all(name.lstrip('-') in IDLE_SHELLS for name in names)
+
+
+def adopt_new_windows(desired, rows, by_surface):
+    """Turn a tab opened on the phone into a real cmux tab.
+
+    A window in one of our sessions without a surface binding was created by a
+    tmux client (Moshi's new-tab, prefix+c), not by this bridge. Create a cmux
+    terminal tab in the same cmux pane and bind that window to it, keeping the
+    window and pane IDs the phone is already looking at. Returns the pane IDs
+    whose shells must be replaced by the new surface's mirror.
+    """
+    by_key = {g['key']: g for g in desired}
+    respawn = set()
+    for row in rows:
+        group = by_key.get(row['group'])
+        if not group or row['surface']:
+            continue
+        # REASON: adoption replaces the pane's process with a mirror
+        # (respawn-pane -k), so only a pane that is nothing but an idle login
+        # shell may be adopted. On 2026-09-26 a Claude session the user had
+        # started in a phone-made tab was killed this way. A busy window is left
+        # alone, with no cmux tab, until its program exits. This also skips
+        # mirrors whose surface-option write failed (their process is python).
+        if not pane_is_idle_shell(row['pane']):
+            continue
+        created = cmux_rpc('surface.create', {'type': 'terminal', 'pane_id': group['pane_id'],
+                                              'workspace_id': group['workspace_id'],
+                                              'window_id': group['window_id'], 'focus': False})
+        sid = created.get('surface_id')
+        if not sid:
+            raise ValueError('cmux surface.create returned no surface_id')
+        # The tree was read before this tab existed; append it so this same pass
+        # binds it at the end of the strip, where cmux and tmux both put new tabs.
+        group['surfaces'].append(dict(id=sid, title=row['title'] or 'terminal', type='terminal',
+                                      index_in_pane=len(group['surfaces'])))
+        tmux('set-option', '-w', '-t', row['window'], SURFACE, sid)
+        tmux('set-option', '-w', '-t', row['window'], 'automatic-rename', 'off')
+        row['surface'] = sid
+        by_surface[sid] = row
+        respawn.add(row['pane'])
+    return respawn
 
 
 def sync(data):
@@ -104,6 +175,7 @@ def sync(data):
                 if row['surface'] in by_surface:
                     raise RuntimeError('duplicate owned surface windows; refusing ambiguous repair')
                 by_surface[row['surface']] = row
+    respawn = adopt_new_windows(desired, rows, by_surface)
     valid = {s['id'] for g in desired for s in g['surfaces']}
     bindings = {}
     for group in desired:
@@ -169,10 +241,17 @@ def sync(data):
             if fresh:
                 tmux('set-option', '-w', '-t', row['window'], SURFACE, sid)
                 tmux('set-option', '-w', '-t', row['window'], 'automatic-rename', 'off')
+            # REASON: remain-on-exit is a window option. The session-level
+            # set-option above only reaches the session's first window, so every
+            # other mirror window closed when its mirror exited and came back with
+            # a new ID under the phone (42 of 51 on 2026-09-27). Keep each window.
+            if row.get('keep') != 'on':
+                tmux('set-option', '-w', '-t', row['window'], 'remain-on-exit', 'on')
+                row['keep'] = 'on'
             if row['title'] != surface['title']:
                 tmux('rename-window', '-t', row['window'], surface['title'] or 'terminal')
-            if row['dead'] == '1':
-                tmux('respawn-pane', '-t', row['pane'], start)
+            if row['dead'] == '1' or row['pane'] in respawn:
+                tmux('respawn-pane', '-k', '-t', row['pane'], start)
             state.update(tmux_session=next((r['name'] for r in rows if r['session'] == session), group['name']),
                          tmux_pane=row['pane'], tmux_window=row['window'])
             atomic(path, state)
@@ -213,7 +292,18 @@ def main():
                 print(json.dumps([{'session': g['name'], 'tabs': len(g['surfaces'])} for g in groups(data)], indent=2))
                 return 0
             with (STATE / '.lock').open('w') as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
+                if args.watch or args.hook:
+                    fcntl.flock(lock, fcntl.LOCK_EX)
+                else:
+                    # REASON: plain one-shot runs come from the after-new-window
+                    # hook, which also fires for the windows sync() itself creates.
+                    # Queueing them on the lock piled up ~25 waiting syncs on
+                    # 2026-09-27. A running sync (or the 15 s daemon) covers the
+                    # new window, so skip instead of waiting.
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        return 0
                 data = tree()
                 bindings = sync(data)
                 if args.hook:
@@ -252,8 +342,12 @@ def main():
         until = time.monotonic() + 15
         while time.monotonic() < until:
             try:
-                clients = tmux('list-clients', '-F', '#{pane_id}', check=False)
-                atomic(STATE / 'visibility.json', {'updated': time.time(), 'panes': clients.stdout.splitlines()})
+                clients = tmux('list-clients', '-F', '#{pane_id} #{client_activity}', check=False)
+                rows = [line.split() for line in clients.stdout.splitlines() if line.strip()]
+                # activity = newest input from any client; mirrors treat a phone
+                # with no input for 5 min (Moshi backgrounded) as gone.
+                activity = max((int(r[1]) for r in rows if len(r) > 1 and r[1].isdigit()), default=0)
+                atomic(STATE / 'visibility.json', {'updated': time.time(), 'panes': [r[0] for r in rows], 'activity': activity})
             except (OSError, subprocess.SubprocessError):
                 pass  # mirrors fall back to a direct read when the sample is stale
             time.sleep(.25)

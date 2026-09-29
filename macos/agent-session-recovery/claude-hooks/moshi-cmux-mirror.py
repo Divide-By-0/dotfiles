@@ -304,26 +304,79 @@ def drain_queue(queue_dir: Path) -> None:
 
 
 def read_keys(buf: bytearray) -> list[bytes]:
-    """Split raw stdin bytes into key sequences."""
+    """Split raw stdin bytes into key sequences.
+
+    CSI sequences are read to their final byte with no short length cap.
+    REASON: an SGR mouse report (ESC [ < 64 ; 12 ; 30 M) is longer than the old
+    8-byte cap, and the leftover "30M" was typed into the cmux terminal.
+    """
     keys: list[bytes] = []
     i = 0
     data = bytes(buf)
     while i < len(data):
-        if data[i] == 0x1B:
-            # Escape sequence — take up to 6 bytes or until final byte.
-            j = i + 1
-            while j < len(data) and j - i < 8:
-                b = data[j]
-                j += 1
-                if 0x40 <= b <= 0x7E and b not in (0x5B, 0x4F):  # final
-                    break
-            keys.append(data[i:j])
-            i = j
-        else:
+        if data[i] != 0x1B:
             keys.append(data[i : i + 1])
             i += 1
+            continue
+        nxt = data[i + 1] if i + 1 < len(data) else None
+        if nxt == 0x5B and data[i + 2 : i + 3] == b"M" and len(data) >= i + 6:
+            j = i + 6  # legacy X10 mouse report: ESC [ M + 3 raw bytes
+        elif nxt == 0x5B:  # CSI: parameters/intermediates, then a final byte
+            j = i + 2
+            while j < len(data) and j - i < 64:
+                j += 1
+                if 0x40 <= data[j - 1] <= 0x7E:
+                    break
+        elif nxt == 0x4F and i + 2 < len(data):  # SS3, e.g. ESC O A
+            j = i + 3
+        else:
+            j = i + 1  # bare ESC; Alt+key arrives as ESC then the key
+        keys.append(data[i:j])
+        i = j
     buf.clear()
     return keys
+
+
+def mouse_event(key: bytes) -> str | None:
+    """'up'/'down' for wheel reports, 'other' for any other mouse report."""
+    if key.startswith(b"\x1b[M") and len(key) == 6:
+        button = key[3] - 32
+    elif key.startswith(b"\x1b[<") and key[-1:] in (b"M", b"m"):
+        try:
+            button = int(key[3:-1].split(b";")[0])
+        except ValueError:
+            return "other"
+    else:
+        return None
+    if button & 64 and not button & 128:
+        return "up" if button & 1 == 0 else "down"
+    return "other"
+
+
+SCROLL_STEP = 3  # lines per wheel notch, like most terminals
+
+
+def scroll_window(lines: list[str], rows: int, offset: int) -> tuple[list[str], int]:
+    """Lines to show `offset` lines above the bottom, keeping one status row."""
+    body = max(1, rows - 1)
+    offset = max(0, min(offset, len(lines) - body))
+    end = len(lines) - offset
+    return lines[max(0, end - body) : end], offset
+
+
+def scrollback_frame(surface_id: str, cols: int, rows: int, offset: int) -> tuple[str, int]:
+    body = max(1, rows - 1)
+    got = rpc("surface.read_text", {"surface_id": surface_id, "lines": body + offset})
+    lines = (got.get("text") or "").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    visible, offset = scroll_window(lines, rows, offset)
+    out = ["\x1b[?25l\x1b[H\x1b[J"]
+    for n, line in enumerate(visible):
+        out.append(f"\x1b[{n + 1};1H" + line[:cols])
+    status = f" scrollback -{offset} lines · scroll down or type to return "[:cols]
+    out.append(f"\x1b[{rows};1H\x1b[7m" + status.ljust(cols) + "\x1b[0m")
+    return "".join(out), offset
 
 
 def forward_key(surface_id: str, key: bytes) -> None:
@@ -342,30 +395,64 @@ def forward_key(surface_id: str, key: bytes) -> None:
     send_text(surface_id, text)
 
 
-def session_attached(visibility_path: Path | None = None) -> bool:
-    """Only the pane actually visible to an attached client owns the viewport.
+# REASON: every desktop resize makes Claude Code reprint its whole conversation
+# into the cmux scrollback. Releasing the phone width on every swipe stacked ~40
+# phone-width copies in one tab (2026-09-28), which read as corrupted output
+# when scrolling up in cmux. Hold the width across swipes; release only when
+# the phone is gone or has sent no input for PHONE_IDLE_SECONDS.
+PHONE_IDLE_SECONDS = 300  # Moshi in the background keeps its tmux client attached
+HOLD_SECONDS = 300
 
+
+def viewport_action(now: float, visible: bool, active: bool, last_visible: float | None) -> str:
+    """'paint' this pane, 'hold' its phone-size viewport, or 'release' it."""
+    if visible:
+        return "paint"
+    if active and last_visible is not None and now - last_visible < HOLD_SECONDS:
+        return "hold"
+    return "release"
+
+
+def phone_state(visibility_path: Path | None = None) -> tuple[bool, bool]:
+    """(this pane is on a phone screen, a phone sent input recently).
+
+    Only the pane actually visible to an attached client owns the viewport.
     Session-attached is insufficient with sibling windows: every background
     mirror would otherwise resize and redraw its desktop surface on each swipe.
     Explicit pane targeting also survives moving windows between sessions.
     """
     pane = os.environ.get("TMUX_PANE")
     if not os.environ.get("TMUX"):
-        return True
+        return True, True
     if not pane:
-        return False
+        return False, False
+    panes: list[str] | None = None
+    activity = None
     if visibility_path is not None:
         sample = load_state(visibility_path)
         if time.time() - sample.get("updated", 0) < 2:
-            return pane in sample.get("panes", [])
-    try:
-        visible = subprocess.check_output(
-            ["tmux", "list-clients", "-F", "#{pane_id}"],
-            text=True, timeout=3, stderr=subprocess.DEVNULL,
-        ).splitlines()
-        return pane in visible
-    except (subprocess.SubprocessError, OSError):
-        return False
+            panes = sample.get("panes", [])
+            activity = sample.get("activity")
+    if panes is None:
+        try:
+            rows = subprocess.check_output(
+                ["tmux", "list-clients", "-F", "#{pane_id} #{client_activity}"],
+                text=True, timeout=3, stderr=subprocess.DEVNULL,
+            ).split("\n")
+        except (subprocess.SubprocessError, OSError):
+            return False, False
+        rows = [r.split() for r in rows if r.strip()]
+        panes = [r[0] for r in rows]
+        activity = max((int(r[1]) for r in rows if len(r) > 1 and r[1].isdigit()), default=0)
+    if not panes:
+        return False, False
+    # Older samples carry no activity; treat any attached client as in use.
+    active = activity is None or time.time() - float(activity) < PHONE_IDLE_SECONDS
+    return active and pane in panes, active
+
+
+def session_attached(visibility_path: Path | None = None) -> bool:
+    return phone_state(visibility_path)[0]
 
 
 def refresh_names(state: dict, state_path: Path) -> None:
@@ -499,7 +586,11 @@ def main() -> int:
     signal.signal(signal.SIGWINCH, on_winch)
 
     tty.setraw(sys.stdin.fileno())
-    sys.stdout.write("\x1b[?1049h\x1b[?25l")  # alt screen, hide cursor until drawn
+    # REASON: mouse reporting (1000 + SGR 1006) makes tmux forward wheel events
+    # to this process instead of opening copy-mode, which has no history on
+    # this alternate-screen pane, so vertical swipes on the phone did nothing.
+    # Wheel events now scroll the cmux tab's own scrollback (surface.read_text).
+    sys.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h")  # alt screen, hide cursor until drawn
     sys.stdout.flush()
 
     last_rev = None
@@ -511,6 +602,10 @@ def main() -> int:
     viewport_surface = None
     cols = rows = 0
     key_buf = bytearray()
+    last_visible: float | None = None
+    last_hold_refresh = 0.0
+    scroll_offset = 0  # lines above live output; 0 means mirroring live
+    scroll_dirty = False
     active_interval = 1.0 / max(args.fps, 1.0)
     idle_interval = 2.0  # only drain hooks; do not hammer cmux
 
@@ -539,19 +634,19 @@ def main() -> int:
                 last_name_refresh = now
 
             visibility_path = state_path.parent / "visibility.json" if state.get("grouped") else None
-            attached = session_attached(visibility_path)
+            attached, phone_active = phone_state(visibility_path)
+            if attached:
+                last_visible = now
+            action = viewport_action(now, attached, phone_active, last_visible)
 
-            # Phone disconnected: stop resizing/mirroring immediately so the
-            # desktop cmux tab stops flashing.
+            # Off the phone screen: stop painting. The desktop viewport is held
+            # or released below, not dropped here (see viewport_action).
             if was_attached and not attached:
-                if viewport_surface:
-                    clear_viewport(viewport_surface)
-                    viewport_surface = None
                 winch["flag"] = False
                 last_rev = last_epoch = last_seq = None
                 draw_idle_status(state)
                 last_idle_draw = now
-                log(f"mirror idle (detached) surface={surface_id}")
+                log(f"mirror idle (not visible) surface={surface_id}")
 
             if attached and not was_attached:
                 winch["flag"] = True
@@ -559,7 +654,16 @@ def main() -> int:
             was_attached = attached
 
             if not attached:
-                # Idle: never call terminal.replay / terminal.viewport.
+                if action == "hold" and viewport_surface:
+                    # Replay reports expire unless refreshed; keep the phone size
+                    # alive without painting so a swipe back needs no resize.
+                    if now - last_hold_refresh >= 2:
+                        replay_viewport(viewport_surface, cols, rows)
+                        last_hold_refresh = now
+                elif viewport_surface:
+                    clear_viewport(viewport_surface)
+                    log(f"mirror released desktop size surface={viewport_surface}")
+                    viewport_surface = None
                 if now - last_idle_draw >= 30:
                     draw_idle_status(state)
                     last_idle_draw = now
@@ -590,7 +694,34 @@ def main() -> int:
                     break
                 key_buf.extend(chunk)
                 for key in read_keys(key_buf):
-                    forward_key(surface_id, key)
+                    event = mouse_event(key)
+                    if event == "up":
+                        scroll_offset += SCROLL_STEP
+                        scroll_dirty = True
+                    elif event == "down":
+                        if scroll_offset:
+                            scroll_offset = max(0, scroll_offset - SCROLL_STEP)
+                            scroll_dirty = True
+                            if not scroll_offset:
+                                last_rev = last_epoch = last_seq = None
+                    elif event is None:
+                        if scroll_offset:  # typing returns to live output
+                            scroll_offset = 0
+                            last_rev = last_epoch = last_seq = None
+                        forward_key(surface_id, key)
+                    # other mouse events (taps, drags) are dropped, never typed
+
+            if scroll_offset:
+                if scroll_dirty:
+                    frame, scroll_offset = scrollback_frame(surface_id, paint_cols, paint_rows, scroll_offset)
+                    sys.stdout.write(frame)
+                    sys.stdout.flush()
+                    scroll_dirty = False
+                    if not scroll_offset:
+                        last_rev = last_epoch = last_seq = None
+                drain_queue(queue_dir)
+                time.sleep(active_interval)
+                continue
 
             viewport_surface = surface_id
             replay = replay_viewport(surface_id, paint_cols, paint_rows)
@@ -614,7 +745,7 @@ def main() -> int:
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old)
         except termios.error:
             pass
-        sys.stdout.write("\x1b[?25h\x1b[?1049l")
+        sys.stdout.write("\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l")
         sys.stdout.flush()
         log(f"mirror exit surface={load_state(state_path).get('surface_id')}")
     return 0
