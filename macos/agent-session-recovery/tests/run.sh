@@ -96,6 +96,8 @@ if plutil -extract RunAtLoad raw -o - "$periodic_plist" >/dev/null 2>&1; then
   exit 1
 fi
 grep -Fqx "set -g @continuum-save-interval '0'" "$ROOT/config/tmux-session-recovery.conf"
+# The tmux server must not run at launchd's background "daemon" priority.
+[ "$(plutil -extract ProcessType raw -o - "$TMP_ROOT/com.aayush.tmux-autostart.plist")" = "Interactive" ]
 
 fake_cmux="$TMP_ROOT/cmux-real"
 fake_log="$TMP_ROOT/cmux.log"
