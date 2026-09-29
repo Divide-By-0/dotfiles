@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import time
+import threading
 import uuid
 
 ROOT = Path(__file__).resolve().parent
@@ -277,6 +278,22 @@ def sync(data):
     return bindings
 
 
+def watch_visibility(stop):
+    """One sampler, independent of slow topology RPCs and the sync lock."""
+    while not stop.is_set():
+        interval = 1.0
+        try:
+            clients = tmux('list-clients', '-F', '#{pane_id} #{client_activity}', check=False)
+            rows = [line.split() for line in clients.stdout.splitlines() if line.strip()]
+            activity = max((int(r[1]) for r in rows if len(r) > 1 and r[1].isdigit()), default=0)
+            atomic(STATE / 'visibility.json', {'updated': time.time(), 'panes': [r[0] for r in rows], 'activity': activity})
+            if rows and time.time() - activity < 300:
+                interval = .25
+        except (OSError, subprocess.SubprocessError):
+            pass  # grouped mirrors stay idle until a fresh sample is available
+        stop.wait(interval)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--watch', action='store_true')
@@ -285,6 +302,8 @@ def main():
     args = parser.parse_args()
     payload = sys.stdin.read() if args.hook else ''
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if args.watch and not args.dry_run:
+        threading.Thread(target=watch_visibility, args=(threading.Event(),), daemon=True).start()
     while True:
         try:
             if args.dry_run:
@@ -338,19 +357,8 @@ def main():
             print('moshi cmux groups: '+str(exc), file=sys.stderr)
             if not args.watch:
                 return 1
-        # One shared visibility sample avoids each idle mirror spawning tmux.
-        until = time.monotonic() + 15
-        while time.monotonic() < until:
-            try:
-                clients = tmux('list-clients', '-F', '#{pane_id} #{client_activity}', check=False)
-                rows = [line.split() for line in clients.stdout.splitlines() if line.strip()]
-                # activity = newest input from any client; mirrors treat a phone
-                # with no input for 5 min (Moshi backgrounded) as gone.
-                activity = max((int(r[1]) for r in rows if len(r) > 1 and r[1].isdigit()), default=0)
-                atomic(STATE / 'visibility.json', {'updated': time.time(), 'panes': [r[0] for r in rows], 'activity': activity})
-            except (OSError, subprocess.SubprocessError):
-                pass  # mirrors fall back to a direct read when the sample is stale
-            time.sleep(.25)
+        time.sleep(15)
+
 
 
 if __name__ == '__main__':

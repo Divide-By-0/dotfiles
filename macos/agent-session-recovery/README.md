@@ -137,6 +137,10 @@ cmux topology every 15 seconds. Hook events also reconcile before enqueuing.
 Reconciliation uses a shared filesystem lock, atomic metadata writes, and
 explicit ownership tags; unavailable/malformed cmux state never triggers pruning.
 Only a pane visible to an attached client mirrors/resizes its real terminal.
+A shared visibility sampler runs independently of topology reconciliation, once
+per second when idle and four times per second while a phone is active. Grouped
+mirrors stay idle if the sample is missing or stale; they never spawn their own
+fallback tmux queries. This prevents idle subprocess storms when sync is slow.
 The bridge preserves pane IDs across tab reorder/moves and updates titles.
 Old per-surface helper sessions are not automatically deleted: restored helpers
 may now contain user shells. The old helper names may remain in the picker;

@@ -13,6 +13,8 @@ import sys
 import tempfile
 import termios
 import time
+import threading
+from unittest.mock import patch
 import unittest
 import uuid
 
@@ -24,6 +26,39 @@ def load(name):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+class VisibilityTests(unittest.TestCase):
+    def test_unavailable_group_sample_never_spawns_per_mirror_tmux(self):
+        mirror = load('moshi-cmux-mirror')
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'TMUX': 'test,1,0', 'TMUX_PANE': '%2'}):
+            path = Path(tmp) / 'visibility.json'
+            for content in (None, '{bad json', json.dumps({'updated': time.time()-12, 'panes': []}),
+                            json.dumps({'updated': time.time()-12, 'panes': ['%2'], 'activity': time.time()})):
+                if content is not None:
+                    path.write_text(content)
+                with patch.object(mirror.subprocess, 'check_output', return_value='') as calls:
+                    for _ in range(96):
+                        self.assertEqual(mirror.phone_state(path), (False, False))
+                    self.assertEqual(calls.call_count, 0, 'idle mirrors must not fan out tmux queries')
+
+    def test_group_sample_recovers_and_preserves_pane_and_activity_gating(self):
+        mirror = load('moshi-cmux-mirror')
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'TMUX': 'test,1,0', 'TMUX_PANE': '%2'}):
+            path = Path(tmp) / 'visibility.json'
+            for panes, activity, expected in (([], 0, (False, False)), (['%2'], time.time(), (True, True)),
+                                              (['%1'], time.time(), (False, True)),
+                                              (['%2'], time.time()-301, (False, False))):
+                path.write_text(json.dumps({'updated': time.time(), 'panes': panes, 'activity': activity}))
+                with patch.object(mirror.subprocess, 'check_output', side_effect=AssertionError('unexpected tmux')):
+                    self.assertEqual(mirror.phone_state(path), expected)
+
+    def test_legacy_ungrouped_mirror_still_queries_its_server(self):
+        mirror = load('moshi-cmux-mirror')
+        with patch.dict(os.environ, {'TMUX': 'test,1,0', 'TMUX_PANE': '%2'}), patch.object(
+                mirror.subprocess, 'check_output', return_value=f'%2 {int(time.time())}\n') as calls:
+            self.assertEqual(mirror.phone_state(), (True, True))
+            calls.assert_called_once()
 
 
 class GroupTests(unittest.TestCase):
@@ -72,6 +107,9 @@ else:
         os.environ['MOSHI_BIN'] = str(fake_moshi)
         self.mod = load('moshi-cmux-groups')
         self.mod.STATE.mkdir()
+        self.visibility_stop = threading.Event()
+        self.visibility_thread = threading.Thread(target=self.mod.watch_visibility, args=(self.visibility_stop,))
+        self.visibility_thread.start()
         self.tmux('-f', '/dev/null', 'new-session', '-d', '-s', 'unrelated', 'sleep 120')
         self.data = {'windows':[{'id':'W1','workspaces':[{'id':'WS1','title':'Project','panes':[
             {'id':'P1','surfaces':[self.surface('A',0),self.surface('B',1),self.surface('browser',2,'browser')]},
@@ -91,6 +129,8 @@ else:
         return subprocess.check_output(['tmux','-L',self.socket,*args],text=True).strip()
 
     def tearDown(self):
+        self.visibility_stop.set()
+        self.visibility_thread.join(timeout=12)
         subprocess.run(['tmux','-L',self.socket,'kill-server'],capture_output=True)
         for proc, fd in self.clients:
             proc.kill()
@@ -182,6 +222,31 @@ else:
         self.assertEqual(self.tmux('display-message','-p','-t',pid,'#{window_id} #{pane_dead}'),wid+' 1')
         again=self.mod.sync(self.data)
         self.assertEqual((again['B'][2]['window'],again['B'][2]['pane']),(wid,pid))
+
+    def test_watcher_samples_visibility_while_topology_lock_is_blocked(self):
+        import fcntl
+        self.visibility_stop.set()
+        self.visibility_thread.join(timeout=12)
+        sample = self.mod.STATE / 'visibility.json'
+        initial = json.loads(sample.read_text())['updated'] if sample.exists() else 0
+        with (self.mod.STATE / '.lock').open('w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            proc = subprocess.Popen([sys.executable, str(ROOT/'claude-hooks/moshi-cmux-groups.py'), '--watch'],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=os.environ.copy())
+            try:
+                updates = set()
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline and len(updates) < 3:
+                    if sample.exists():
+                        value = json.loads(sample.read_text())
+                        if value['updated'] > initial:
+                            updates.add(value['updated'])
+                            self.assertEqual(value['panes'], [])
+                    time.sleep(.1)
+                self.assertGreaterEqual(len(updates), 3, 'visibility stopped behind topology lock')
+            finally:
+                proc.terminate()
+                proc.communicate(timeout=12)
 
     def test_one_shot_sync_skips_instead_of_queueing_on_the_lock(self):
         """Hook-launched syncs must not pile up behind a running sync."""
