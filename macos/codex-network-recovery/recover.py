@@ -105,7 +105,10 @@ def recover(client, thread_id, failed, state, now, dry_run=False):
     turns = page.get('data', [])
     if not turns or turns[0]['id'] != failed['turn_id']:
         return 'changed'
-    if ERROR not in (turns[0].get('error') or {}).get('message', ''):
+    # EMFILE can prevent projecting the durable error into the server's history view.
+    # The canonical rollout already proves this turn failed; reject a conflicting live error.
+    live_error = turns[0].get('error')
+    if live_error and ERROR not in live_error.get('message', ''):
         return 'changed'
     if thread.get('parentThreadId') and thread.get('status', {}).get('type') == 'systemError':
         parent_id = thread['parentThreadId']

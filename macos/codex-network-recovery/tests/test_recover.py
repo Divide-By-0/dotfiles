@@ -65,6 +65,16 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(set(start),{'threadId','clientUserMessageId','input'})
         self.assertEqual([p for m,p in client.calls if m=='thread/resume'],[{'threadId':'id','excludeTurns':True}])
 
+    def test_missing_error_projection_uses_matching_durable_turn(self):
+        c=self.client()
+        original=c.rpc
+        def rpc(method,params):
+            result=original(method,params)
+            if method=='thread/turns/list':result['data'][0]['error']=None
+            return result
+        c.rpc=rpc
+        self.assertEqual(r.recover(c,'id',self.failed(),{},140),'resumed')
+
     def test_lost_reply_is_not_replayed(self):
         state={};client=self.client(fail_send=True)
         with self.assertRaises(TimeoutError):r.recover(client,'id',self.failed(),state,140)

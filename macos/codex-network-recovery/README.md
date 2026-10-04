@@ -25,7 +25,7 @@ Both jobs have `SoftResourceLimits.NumberOfFiles=4096`, and the starter raises i
 
 ## Recovery contract
 
-Only non-archived tasks updated within 24 hours are examined, using the canonical ID/path from the read-only state database. The newest durable lifecycle event must be a completed turn with this exact error. A 30-second settling period gives existing owners time to resume it. The server must still show `systemError`, and the latest server turn must match the failed turn. Completed tasks, ordinary errors, user aborts, active tasks, and newer turns are excluded.
+Only non-archived tasks updated within 24 hours are examined, using the canonical ID/path from the read-only state database. The newest durable lifecycle event must be a completed turn with this exact error. A 30-second settling period gives existing owners time to resume it. The server must still show `systemError`, and the latest server turn must match the failed turn. A missing server error projection is accepted only when the canonical durable turn provides the exact error; a conflicting server error is rejected. Completed tasks, ordinary errors, user aborts, active tasks, and newer turns are excluded.
 
 Top-level loaded tasks resume through the existing daemon's authenticated local control socket using `thread/resume` then `turn/start`. No model, effort, cwd, policy, permission, tool, or environment overrides are sent. Approval requests remain with the existing owner. The watcher closes its connection after the start acknowledgement.
 
