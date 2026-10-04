@@ -18,8 +18,8 @@ python3 macos/codex-network-recovery/install.py
 
 The installer copies reviewed source outside Documents to `~/.local/share/codex-network-recovery`, installs its pinned WebSocket dependency in a dedicated venv, and registers two LaunchAgents:
 
-- `com.aayush.codex-network-recover`: check every 60 seconds.
-- `com.aayush.codex-network-start`: start a **missing** managed daemon every 300 seconds, with a soft file limit of at least 4096. A running daemon is left alone.
+- `com.aayush.codex-network-recover`: check once an hour.
+- `com.aayush.codex-network-start`: start a **missing** managed daemon once an hour, with a soft file limit of at least 4096. A running daemon is left alone.
 
 Both jobs have `SoftResourceLimits.NumberOfFiles=4096`, and the starter raises its own soft limit before invoking the normal daemon command. A daemon spawned by this starter inherits that capacity. A daemon started first by another application can still inherit that application's limit. An already-running daemon cannot inherit a later parent's limit: fixing that process requires a coordinated restart after its work finishes. On the installation machine, the separate updater was refreshed under the 4096 limit without restarting the daemon; upstream source confirms updater SIGTERM stops only its loop. This installer intentionally does not restart active tasks. On other machines, upstream automatic updates may spawn from an existing low-limit updater; the watcher continues to protect interrupted tasks, but does not claim to fix that binary's resource management.
 

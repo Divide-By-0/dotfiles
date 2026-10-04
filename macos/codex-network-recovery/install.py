@@ -32,7 +32,7 @@ for name in ('recover.py', 'start-daemon.py', 'requirements.txt'):
         shutil.copy2(target, target.with_name(target.name + '.before-' + stamp))
     shutil.copy2(source / name, target)
 python = str(venv / 'bin/python')
-for suffix, script, interval in [('recover', 'recover.py', 60), ('start', 'start-daemon.py', 300)]:
+for suffix, script, interval in [('recover', 'recover.py', 3600), ('start', 'start-daemon.py', 3600)]:
     label = 'com.aayush.codex-network-' + suffix
     path = agents / (label + '.plist')
     spec = {'Label': label, 'ProgramArguments': [python, str(runtime / script)],
@@ -47,4 +47,4 @@ for suffix, script, interval in [('recover', 'recover.py', 60), ('start', 'start
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     path.write_bytes(plistlib.dumps(spec))
     subprocess.run(['launchctl', 'bootstrap', f'gui/{os.getuid()}', str(path)], check=True)
-print('Installed 60-second recovery and high-capacity missing-daemon starter. Running work is unchanged.')
+print('Installed hourly recovery and high-capacity missing-daemon starter. Running work is unchanged.')
