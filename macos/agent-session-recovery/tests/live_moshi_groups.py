@@ -36,6 +36,7 @@ ids=[s['id'] for s in surfaces]
 socket='moshi-live-'+uuid.uuid4().hex
 client=None
 master=None
+watcher=None
 with tempfile.TemporaryDirectory(prefix='moshi-live-') as tmp:
     path=Path(tmp)
     wrapper=path/'cmux'
@@ -57,6 +58,11 @@ else:
     try:
         tmux('-f','/dev/null','new-session','-d','-s','test-anchor','sleep 120')
         result=subprocess.run([sys.executable,str(ROOT/'claude-hooks/moshi-cmux-groups.py')],env=env,text=True,capture_output=True,check=True)
+        # Grouped mirrors intentionally stay idle without the shared sampler.
+        # Exercise the production watcher instead of expecting one-shot sync
+        # alone to enable input/replay (that behavior changed in the idle fix).
+        watcher=subprocess.Popen([sys.executable,str(ROOT/'claude-hooks/moshi-cmux-groups.py'),'--watch'],
+                                 env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         states=[json.loads(p.read_text()) for p in (path/'state').glob('*.json')]
         states.sort(key=lambda x:ids.index(x['surface_id']))
         a,b=states
@@ -89,6 +95,8 @@ else:
         context=json.loads(subprocess.check_output(['/opt/homebrew/bin/moshi','context'],env=context_env,text=True))
         print(json.dumps({'result':'PASS','tabs':2,'prefix_next_previous':True,'input_and_replay':True,'moshi_context':context}))
     finally:
+        if watcher:
+            watcher.terminate();watcher.wait(timeout=12)
         subprocess.run(['tmux','-L',socket,'kill-server'],capture_output=True)
         if client: client.kill();client.wait()
         if master is not None: os.close(master)
