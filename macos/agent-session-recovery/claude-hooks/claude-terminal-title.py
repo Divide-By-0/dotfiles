@@ -31,8 +31,8 @@ def title_for(state: dict) -> str:
     topic = clean(str(state.get("aiTitle") or state.get("promptTitle") or ""))
     topic = re.sub(r"^codex\s+task\s+[0-9a-f]{8}(?:-[0-9a-f-]{27})?\b\s*[:—-]?\s*", "", topic, flags=re.I)
     if not topic:
-        return "Claude Code"
-    return "Claude — " + topic[0].upper() + topic[1:]
+        return "Claude"
+    return topic[0].upper() + topic[1:] + " — Claude"
 
 
 def read_titles(transcript: Path, session: str, cache_root: Path) -> dict:

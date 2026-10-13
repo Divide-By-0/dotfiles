@@ -20,7 +20,7 @@ Why copies: this checkout lives under `~/Documents`, which macOS TCC gates per r
 Claude can generate a title such as `Codex task 01a128ab airtable submission`
 from a prompt asking it to resume a Codex task. That describes its input, but
 makes the running provider unclear. The installed lifecycle hook displays
-`Claude — Airtable submission`, while preserving explicit Claude `/rename`
+`Airtable submission — Claude`, while preserving explicit Claude `/rename`
 titles. Manual cmux tab names still take precedence over OSC terminal titles.
 
 `install-claude-titles.py` installs just this hook and merges it into existing

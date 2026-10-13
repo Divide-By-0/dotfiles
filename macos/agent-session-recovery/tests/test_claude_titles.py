@@ -37,7 +37,7 @@ class ClaudeTitleTests(unittest.TestCase):
         return titles.read_titles(self.transcript, self.session, self.home / "cache")
 
     def test_handoff_names_running_provider_and_removes_opaque_id(self):
-        self.assertEqual(titles.title_for(self.state()), "Claude — Airtable submission")
+        self.assertEqual(titles.title_for(self.state()), "Airtable submission — Claude")
 
     def test_custom_rename_wins_over_later_generated_titles(self):
         self.state()
@@ -47,16 +47,16 @@ class ClaudeTitleTests(unittest.TestCase):
 
     def test_topic_can_still_legitimately_mention_codex(self):
         self.append("ai-title", aiTitle="Fix Codex authentication")
-        self.assertEqual(titles.title_for(self.state()), "Claude — Fix Codex authentication")
+        self.assertEqual(titles.title_for(self.state()), "Fix Codex authentication — Claude")
 
     def test_missing_transcript_still_names_new_terminal_claude(self):
-        self.assertEqual(titles.title_for({}), "Claude Code")
+        self.assertEqual(titles.title_for({}), "Claude")
 
     def test_new_session_uses_first_human_prompt_without_model_calls(self):
         self.transcript.unlink()
         self.append("user", message={"content": "Prepare Airtable submission\nExtra details"}, origin={"kind": "human"})
         self.append("user", message={"content": "continue"}, origin={"kind": "human"})
-        self.assertEqual(titles.title_for(self.state()), "Claude — Prepare Airtable submission")
+        self.assertEqual(titles.title_for(self.state()), "Prepare Airtable submission — Claude")
 
     def test_detached_hook_resolves_exact_cmux_surface_not_focused_tab(self):
         raw = json.dumps({"terminals": [
@@ -75,7 +75,7 @@ class ClaudeTitleTests(unittest.TestCase):
         with self.transcript.open("a") as out:
             out.write('{"type":"custom-title","sessionId":"wrong","customTitle":"Wrong"}\n')
             out.write(json.dumps(dict(type="custom-title", sessionId=self.session, customTitle="New name")))
-        self.assertEqual(titles.title_for(self.state()), "Claude — Airtable submission")
+        self.assertEqual(titles.title_for(self.state()), "Airtable submission — Claude")
         with self.transcript.open("a") as out:
             out.write("\n")
         self.assertEqual(titles.title_for(self.state()), "New name")
@@ -95,7 +95,7 @@ class ClaudeTitleTests(unittest.TestCase):
                                  start_new_session=True, timeout=5)
         self.assertEqual((process.returncode, process.stdout, process.stderr), (0, "", ""))
         self.assertTrue(select.select([master], [], [], 2)[0])
-        self.assertEqual(os.read(master, 4096), "\x1b]2;Claude — Airtable submission\x07".encode())
+        self.assertEqual(os.read(master, 4096), "\x1b]2;Airtable submission — Claude\x07".encode())
 
     def test_installer_preserves_existing_hooks_settings_and_is_idempotent(self):
         settings = self.home / ".claude/settings.json"
