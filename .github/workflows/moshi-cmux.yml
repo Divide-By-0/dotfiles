@@ -1,11 +1,14 @@
 name: Moshi cmux integration
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths: ['macos/agent-session-recovery/**', '.github/workflows/moshi-cmux.yml']
   push:
+    branches: ['master']
     paths: ['macos/agent-session-recovery/**', '.github/workflows/moshi-cmux.yml']
 jobs:
   grouped-tabs:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,3 +19,4 @@ jobs:
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_groups.py -v
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_pty_capacity.py -v
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_example.py -v
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_claude_titles.py -v

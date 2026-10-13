@@ -134,6 +134,7 @@ render_plist() {
 
 ensure_tmux_source
 ensure_zsh_source
+python3 "$ROOT/install-claude-titles.py"
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 render_plist "$ROOT/launchagents/com.aayush.tmux-autostart.plist.in" "$HOME/Library/LaunchAgents/com.aayush.tmux-autostart.plist"
 render_plist "$ROOT/launchagents/com.aayush.tmux-daily-resurrect-save.plist.in" "$HOME/Library/LaunchAgents/com.aayush.tmux-daily-resurrect-save.plist"

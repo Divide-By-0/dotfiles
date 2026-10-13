@@ -15,6 +15,24 @@ Why copies: this checkout lives under `~/Documents`, which macOS TCC gates per r
 - Claude startup trust and large-session summary prompts are accepted only in panes being relaunched from an already saved checkpoint.
 - Plain login-shell rows remain outside the auto-restore allowlist. Their visible `Previous command (not auto-restored)` annotation is intentional: it preserves evidence when a pre-reboot agent was accidentally saved as its outer login shell instead of silently treating that pane as successfully recovered.
 
+## Claude terminal titles
+
+Claude can generate a title such as `Codex task 01a128ab airtable submission`
+from a prompt asking it to resume a Codex task. That describes its input, but
+makes the running provider unclear. The installed lifecycle hook displays
+`Claude — Airtable submission`, while preserving explicit Claude `/rename`
+titles. Manual cmux tab names still take precedence over OSC terminal titles.
+
+`install-claude-titles.py` installs just this hook and merges it into existing
+Claude settings, with backups. It disables Claude's competing native terminal
+title generation; new sessions use the first human prompt as a local label,
+while resumed sessions retain their saved title. The hook writes to its own
+terminal (the exact inherited surface for detached cmux hooks), never to hook
+stdout. New Claude processes use this behavior. Existing sessions can finish
+without a restart. The hook reads only title records locally, caches transcript
+offsets, and makes no model calls. It also labels standalone Claude terminals;
+headless invocations have no eligible terminal and remain silent.
+
 ## Generated tmux names
 
 Moshi mirrors report the visible phone pane's width and height to cmux using
