@@ -18,5 +18,6 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_groups.py -v
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_pty_capacity.py -v
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_launch.py -v
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_example.py -v
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_claude_titles.py -v

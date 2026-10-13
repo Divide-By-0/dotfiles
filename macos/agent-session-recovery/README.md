@@ -35,6 +35,14 @@ headless invocations have no eligible terminal and remain silent.
 
 ## Generated tmux names
 
+The Moshi watcher, cmux Claude hook and tmux new-window hook all use the
+installed `~/.local/bin/moshi-cmux` launcher. It runs the stdlib-only bridge
+with `/usr/bin/python3`, independent of Homebrew's removable `python3` link
+and the caller's Conda/pyenv PATH. The watcher respawns dead owned mirrors on
+its next reconciliation while preserving their pane IDs and unrelated agents.
+`moshi-cmux --dry-run` checks cmux connectivity without changing any panes.
+The LaunchAgent retains the PTY-capacity gate before starting the watcher.
+
 Moshi mirrors report the visible phone pane's width and height to cmux using
 `client_id`, `viewport_columns`, and `viewport_rows` on `terminal.replay`.
 Ghostty reflows the terminal and sends the running application SIGWINCH, as with

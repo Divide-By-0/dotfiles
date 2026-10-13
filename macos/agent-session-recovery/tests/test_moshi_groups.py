@@ -2,6 +2,7 @@
 """Real isolated tmux tests. No user terminals, hooks, or pairing are used."""
 import importlib.util
 import errno
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ import pty
 import select
 import signal
 import subprocess
+import struct
 import sys
 import tempfile
 import termios
@@ -222,6 +224,7 @@ else:
         self.assertEqual(self.tmux('display-message','-p','-t',pid,'#{window_id} #{pane_dead}'),wid+' 1')
         again=self.mod.sync(self.data)
         self.assertEqual((again['B'][2]['window'],again['B'][2]['pane']),(wid,pid))
+        self.assertEqual(self.tmux('display-message','-p','-t',pid,'#{pane_dead}'),'0')
 
     def test_watcher_samples_visibility_while_topology_lock_is_blocked(self):
         import fcntl
@@ -317,7 +320,7 @@ else:
         a=bindings['A'][2];b=bindings['B'][2]
         self.tmux('select-window','-t',a['window'])
         master,slave=pty.openpty()
-        termios.tcsetwinsize(slave, (30, 37))
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 37, 0, 0))
         proc=subprocess.Popen(['tmux','-L',self.socket,'attach-session','-t',a['session']],stdin=slave,stdout=slave,stderr=slave,env=os.environ.copy())
         os.close(slave);self.clients.append((proc,master))
         def wait_for(predicate):
@@ -351,7 +354,7 @@ else:
         self.assertEqual(report['viewport_rows'],29)
         self.assertTrue(report['client_id'].startswith('moshi-tmux-'))
         self.assertNotIn('columns',report)
-        termios.tcsetwinsize(master, (43, 52))
+        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 43, 52, 0, 0))
         proc.send_signal(signal.SIGWINCH)  # openpty/Popen has no controlling tty
         wait_for(lambda: reports('B')[-1].get('viewport_columns')==52)
         self.assertEqual(reports('B')[-1]['viewport_rows'],42)
@@ -380,7 +383,7 @@ else:
         subprocess.run(['tmux','-L',self.socket,'source-file','-'],input=wheel+'\n',text=True,check=True)
         self.tmux('select-window','-t',a['window'])
         master,slave=pty.openpty()
-        termios.tcsetwinsize(slave,(30,37))
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 37, 0, 0))
         proc=subprocess.Popen(['tmux','-L',self.socket,'attach-session','-t',a['session']],stdin=slave,stdout=slave,stderr=slave,env=os.environ.copy())
         os.close(slave);self.clients.append((proc,master))
         def wait_for(predicate,what):

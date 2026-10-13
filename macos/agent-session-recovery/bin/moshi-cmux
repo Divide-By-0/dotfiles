@@ -1,0 +1,5 @@
+#!/bin/sh
+# One stdlib-only runtime for launchd, Claude hooks and tmux window hooks.
+# Homebrew upgrades can remove its unversioned python3 link. macOS Python is
+# independent of that link and of the caller's PATH/Conda/pyenv environment.
+exec /usr/bin/python3 "$HOME/.claude/hooks/moshi-cmux-groups.py" "$@"

@@ -47,7 +47,7 @@ backup_and_install() {
 
 backup_and_install "$ROOT/bin/wait-for-pty-capacity.sh" "$HOME/.local/bin/wait-for-pty-capacity.sh"
 
-for name in cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh tmux-periodic-resurrect-save.sh agent-session-doctor; do
+for name in cmux moshi-cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh tmux-periodic-resurrect-save.sh agent-session-doctor; do
   backup_and_install "$ROOT/bin/$name" "$HOME/.local/bin/$name"
 done
 
