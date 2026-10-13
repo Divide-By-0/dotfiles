@@ -15,7 +15,43 @@ Why copies: this checkout lives under `~/Documents`, which macOS TCC gates per r
 - Claude startup trust and large-session summary prompts are accepted only in panes being relaunched from an already saved checkpoint.
 - Plain login-shell rows remain outside the auto-restore allowlist. Their visible `Previous command (not auto-restored)` annotation is intentional: it preserves evidence when a pre-reboot agent was accidentally saved as its outer login shell instead of silently treating that pane as successfully recovered.
 
+## Claude terminal titles
+
+Claude can generate a title such as `Codex task 01a128ab airtable submission`
+from a prompt asking it to resume a Codex task. That describes its input, but
+makes the running provider unclear. The installed lifecycle hook displays
+`Airtable submission — Claude`, while preserving explicit Claude `/rename`
+titles. Manual cmux tab names still take precedence over OSC terminal titles.
+
+`install-claude-titles.py` installs just this hook and merges it into existing
+Claude settings, with backups. It disables Claude's competing native terminal
+title generation; new sessions use the first human prompt as a local label,
+while resumed sessions retain their saved title. The hook writes to its own
+terminal (the exact inherited surface for detached cmux hooks), never to hook
+stdout. New Claude processes use this behavior. Existing sessions can finish
+without a restart. The hook reads only title records locally, caches transcript
+offsets, and makes no model calls. It also labels standalone Claude terminals;
+headless invocations have no eligible terminal and remain silent.
+
 ## Generated tmux names
+
+The Moshi watcher, cmux Claude hook and tmux new-window hook all use the
+installed `~/.local/bin/moshi-cmux` launcher. It runs the stdlib-only bridge
+with macOS Python, rediscovering compatible versioned Homebrew runtimes if
+necessary. Isolated Python mode excludes the caller's Conda/pyenv settings,
+`PYTHONHOME`, `PYTHONPATH` and user packages. Mirrors also restart through this
+launcher rather than a saved interpreter path. The watcher respawns dead owned mirrors on
+its next reconciliation while preserving their pane IDs and unrelated agents.
+`moshi-cmux --dry-run` checks cmux connectivity without changing any panes.
+The LaunchAgent retains the PTY-capacity gate before starting the watcher.
+`moshi-cmux --status` reports dead or missing mirrors, stale visibility and the
+selected runtime without modifying panes; it exits nonzero when unhealthy.
+Missing/incompatible runtimes produce an explicit configuration error.
+Incomplete or unsupported cmux schemas and failed tmux inventories preserve
+existing panes. New surface types preserve existing mappings while known
+terminal tabs keep synchronizing. Control characters in titles are normalized only for tmux names;
+original titles stay in bridge state. Interrupted moves clean up their temporary
+mirror, and raw-mode startup preserves keys typed while a runtime is starting.
 
 Moshi mirrors report the visible phone pane's width and height to cmux using
 `client_id`, `viewport_columns`, and `viewport_rows` on `terminal.replay`.

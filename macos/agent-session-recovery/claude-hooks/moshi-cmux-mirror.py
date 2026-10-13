@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import select
@@ -77,7 +78,8 @@ def rpc(method: str, params: dict | None = None) -> dict:
 
 def load_state(path: Path) -> dict:
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
 
@@ -433,10 +435,14 @@ def phone_state(visibility_path: Path | None = None) -> tuple[bool, bool]:
         # The watcher owns grouped visibility. A slow/dead watcher must not
         # turn 96 idle mirrors into 96 tmux subprocesses every polling round.
         # Fail idle until a fresh sample arrives, including on first startup.
-        if time.time() - sample.get("updated", 0) >= 2:
-            return False, False
-        panes = sample.get("panes", [])
+        updated = sample.get("updated")
+        panes = sample.get("panes")
         activity = sample.get("activity")
+        if (not isinstance(updated, (int, float)) or not math.isfinite(updated) or
+                not 0 <= time.time() - updated < 2 or not isinstance(panes, list) or
+                not all(isinstance(p, str) for p in panes) or
+                (activity is not None and (not isinstance(activity, (int, float)) or not math.isfinite(activity)))):
+            return False, False
     if panes is None:
         try:
             rows = subprocess.check_output(
@@ -589,7 +595,8 @@ def main() -> int:
 
     signal.signal(signal.SIGWINCH, on_winch)
 
-    tty.setraw(sys.stdin.fileno())
+    # TCSAFLUSH (setraw's default) loses keys queued while the launcher starts.
+    tty.setraw(sys.stdin.fileno(), when=termios.TCSANOW)
     # REASON: mouse reporting (1000 + SGR 1006) makes tmux forward wheel events
     # to this process instead of opening copy-mode, which has no history on
     # this alternate-screen pane, so vertical swipes on the phone did nothing.
