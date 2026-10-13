@@ -23,6 +23,7 @@ class LaunchTests(unittest.TestCase):
         (hooks / 'moshi-cmux-groups.py').write_text(
             'import json,sys,os\nfrom pathlib import Path\n'
             'data={"args":sys.argv[1:],"input":sys.stdin.read()}\n'
+            'if data["args"]==["--event"]: print(json.loads(data["input"]).get("hook_event_name", "")); sys.exit(0)\n'
             'Path(os.environ["HOME"],"launch.json").write_text(json.dumps(data))\n'
             'print(json.dumps(data))\n')
         bin_dir = self.home / '.local/bin'
@@ -94,6 +95,54 @@ class LaunchTests(unittest.TestCase):
             time.sleep(.05)
         self.assertTrue(receipt.exists(), 'new-window hook did not launch the bridge')
         self.assertEqual(json.loads(receipt.read_text())['args'], [])
+
+    def test_runtime_removal_and_versioned_upgrade_are_discovered(self):
+        runtimes = self.home / 'runtimes with spaces'
+        runtimes.mkdir()
+        candidate = runtimes / 'python3.14'
+        candidate.write_text('#!/bin/sh\necho selected >> "$HOME/runtime-selected"\nexec /usr/bin/python3 "$@"\n')
+        candidate.chmod(0o755)
+        env = dict(self.env, MOSHI_RUNTIME_DIRS=str(runtimes))
+        for version in ['python3.14', 'python3.15']:
+            with self.subTest(version=version):
+                if candidate.name != version:
+                    candidate = candidate.rename(runtimes / version)
+                result = subprocess.run([str(self.home / '.local/bin/moshi-cmux'), '--watch'],
+                                        input='', text=True, capture_output=True, env=env, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((self.home / 'runtime-selected').exists())
+                (self.home / 'runtime-selected').unlink()
+        candidate.unlink()
+        result = subprocess.run([str(self.home / '.local/bin/moshi-cmux')],
+                                input='', text=True, capture_output=True, env=env, timeout=5)
+        self.assertEqual(result.returncode, 78)
+        self.assertIn('compatible Python', result.stderr)
+
+    def test_broken_runtime_is_skipped_and_python_environment_is_isolated(self):
+        runtimes = self.home / 'runtimes'
+        runtimes.mkdir()
+        broken = runtimes / 'python3'
+        broken.write_text('#!/bin/sh\nexit 1\n')
+        broken.chmod(0o755)
+        fallback = runtimes / 'python3.12'
+        fallback.write_text('#!/bin/sh\nexec /usr/bin/python3 "$@"\n')
+        fallback.chmod(0o755)
+        poison = self.home / 'poison'
+        poison.mkdir()
+        (poison / 'json.py').write_text('raise RuntimeError("unrelated Python environment")\n')
+        env = dict(self.env, MOSHI_RUNTIME_DIRS=str(runtimes), PYTHONPATH=str(poison), PYTHONHOME='/missing')
+        result = subprocess.run([str(self.home / '.local/bin/moshi-cmux'), '--watch'],
+                                input='', text=True, capture_output=True, env=env, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['args'], ['--watch'])
+
+    def test_mirror_mode_uses_the_same_runtime_discovery(self):
+        mirror = self.home / '.claude/hooks/moshi-cmux-mirror.py'
+        mirror.write_text('import json,sys\nprint(json.dumps(sys.argv[1:]))\n')
+        result = subprocess.run([str(self.home / '.local/bin/moshi-cmux'), '--mirror', 'state with spaces', 'queue'],
+                                input='', text=True, capture_output=True, env=self.env, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), ['state with spaces', 'queue'])
 
 
 if __name__ == '__main__':

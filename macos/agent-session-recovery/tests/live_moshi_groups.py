@@ -54,6 +54,7 @@ else:
     wrapper.chmod(0o755)
     env=os.environ.copy()
     env.update(TMUX_SOCKET=socket,CMUX_BIN=str(wrapper),MOSHI_GROUP_STATE_DIR=str(path/'state'),MOSHI_LOG_PATH=str(path/'mirror.log'),TERM='xterm-256color')
+    env.update(MOSHI_CMUX_LAUNCHER=str(ROOT/'bin/moshi-cmux'),MOSHI_CMUX_ROOT=str(ROOT/'claude-hooks'))
     def tmux(*a): return subprocess.check_output(['tmux','-L',socket,*a],text=True,env=env).strip()
     try:
         tmux('-f','/dev/null','new-session','-d','-s','test-anchor','sleep 120')

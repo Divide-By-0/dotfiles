@@ -10,6 +10,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -25,6 +26,7 @@ ROOT = Path(__file__).resolve().parent
 STATE = Path(os.environ.get('MOSHI_GROUP_STATE_DIR', str(Path.home() / '.claude/hooks/moshi-cmux-groups')))
 OWNER = '@moshi_cmux_group'
 SURFACE = '@moshi_cmux_surface'
+NON_TERMINAL_TYPES = {'browser', 'simulator', 'agent-session', 'markdown', 'filepreview'}
 
 
 def command(args, *, check=True):
@@ -40,17 +42,58 @@ def tmux(*args, check=True):
 
 def cmux_rpc(method, params):
     exe = os.environ.get('CMUX_BIN') or shutil.which('cmux') or '/opt/homebrew/bin/cmux'
-    return json.loads(command([exe, 'rpc', method, json.dumps(params)]).stdout)
+    data = json.loads(command([exe, 'rpc', method, json.dumps(params)]).stdout)
+    if not isinstance(data, dict):
+        raise ValueError('unsupported cmux RPC response: expected object')
+    if data.get('error') or data.get('ok') is False:
+        raise ValueError('cmux '+method+' returned an error; preserving existing panes')
+    return data
 
 
 def tree():
     data = cmux_rpc('system.tree', {})
-    if not isinstance(data.get('windows'), list):
+    if not isinstance(data, dict) or not isinstance(data.get('windows'), list):
         raise ValueError('cmux returned no authoritative window list')
     return data
 
 
+def validate_tree(data):
+    """Reject incomplete/changed schemas before any tmux mutation or pruning."""
+    seen = set()
+    def children(node, key):
+        if not isinstance(node, dict) or not isinstance(node.get(key), list):
+            raise ValueError('unsupported cmux tree: missing '+key+' list')
+        return node[key]
+    def identity(node):
+        if not isinstance(node, dict) or not isinstance(node.get('id'), str) or not node['id']:
+            raise ValueError('unsupported cmux tree: missing stable ID')
+    for window in children(data, 'windows'):
+        identity(window)
+        for workspace in children(window, 'workspaces'):
+            identity(workspace)
+            if not isinstance(workspace.get('title', ''), str):
+                raise ValueError('unsupported cmux tree: workspace title')
+            for pane in children(workspace, 'panes'):
+                identity(pane)
+                for surface in children(pane, 'surfaces'):
+                    identity(surface)
+                    if surface['id'] in seen:
+                        raise ValueError('unsupported cmux tree: duplicate surface ID')
+                    seen.add(surface['id'])
+                    if not isinstance(surface.get('type'), str) or not surface['type']:
+                        raise ValueError('unsupported cmux tree: missing surface type')
+                    if surface['type'] == 'terminal' and (type(surface.get('index_in_pane')) is not int or
+                            not isinstance(surface.get('title'), str)):
+                        raise ValueError('unsupported cmux tree: terminal index/title')
+
+
+def window_title(title):
+    # tmux rejects tabs/newlines in names; keep the state file's original title.
+    return re.sub(r'[\x00-\x1f\x7f]', ' ', title).strip() or 'terminal'
+
+
 def groups(data):
+    validate_tree(data)
     result = []
     for window in data['windows']:
         for workspace in window['workspaces']:
@@ -61,7 +104,7 @@ def groups(data):
                     continue
                 identity = '/'.join([window['id'], workspace['id'], pane['id']])
                 digest = hashlib.sha256(identity.encode()).hexdigest()[:12]
-                slug = re.sub(r'[^a-z0-9]+', '-', workspace['title'].lower()).strip('-')[:28] or 'workspace'
+                slug = re.sub(r'[^a-z0-9]+', '-', workspace.get('title', '').lower()).strip('-')[:28] or 'workspace'
                 result.append(dict(key=identity, name=f'cmux-{slug}-{digest}', window_id=window['id'],
                                    workspace_id=workspace['id'], pane_id=pane['id'], surfaces=surfaces))
     return result
@@ -81,7 +124,8 @@ def state_path(sid):
 
 def load(path):
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
@@ -89,11 +133,15 @@ def load(path):
 def inventory():
     result = tmux('list-windows', '-a', '-F',
                   '#{session_id}\t#{session_name}\t#{'+OWNER+'}\t#{window_id}\t#{window_index}\t#{'+SURFACE+'}\t#{pane_id}\t#{pane_dead}\t#{remain-on-exit}\t#{window_name}', check=False)
+    if result.returncode and not ('no server running on ' in result.stderr or
+                                  ('error connecting to ' in result.stderr and 'No such file or directory' in result.stderr)):
+        raise RuntimeError('tmux inventory failed; preserving existing panes: '+result.stderr.strip())
     rows = []
     for line in result.stdout.splitlines():
-        fields = line.split('\t')
-        if len(fields) == 10:
-            rows.append(dict(zip(['session', 'name', 'group', 'window', 'index', 'surface', 'pane', 'dead', 'keep', 'title'], fields)))
+        fields = line.split('\t', 9)
+        if len(fields) != 10:
+            raise RuntimeError('unsupported tmux inventory format; preserving existing panes')
+        rows.append(dict(zip(['session', 'name', 'group', 'window', 'index', 'surface', 'pane', 'dead', 'keep', 'title'], fields)))
     return rows
 
 
@@ -138,6 +186,9 @@ def adopt_new_windows(desired, rows, by_surface):
         group = by_key.get(row['group'])
         if not group or row['surface']:
             continue
+        start = tmux('display-message', '-p', '-t', row['pane'], '#{pane_start_command}').stdout
+        if 'moshi-cmux-mirror.py' in start or 'moshi-cmux --mirror' in start:
+            continue  # our launcher may briefly look like an idle shell during runtime discovery
         # REASON: adoption replaces the pane's process with a mirror
         # (respawn-pane -k), so only a pane that is nothing but an idle login
         # shell may be adopted. On 2026-09-26 a Claude session the user had
@@ -186,6 +237,11 @@ def sync(data):
                 by_surface[row['surface']] = row
     respawn = adopt_new_windows(desired, rows, by_surface)
     valid = {s['id'] for g in desired for s in g['surfaces']}
+    # Future non-terminal types must not stop known terminals from working or
+    # make an existing mirror look deleted. Preserve unfamiliar surface IDs.
+    valid.update(s['id'] for w in data['windows'] for ws in w['workspaces']
+                 for p in ws['panes'] for s in p['surfaces']
+                 if s['type'] != 'terminal' and s['type'] not in NON_TERMINAL_TYPES)
     bindings = {}
     for group in desired:
         session = sessions.get(group['key'])
@@ -211,7 +267,8 @@ def sync(data):
                          cmux_window_id=group['window_id'], cmux_pane_id=group['pane_id'],
                          title=surface['title'], grouped=True)
             atomic(path, state)
-            start = shlex.join([sys.executable, str(ROOT / 'moshi-cmux-mirror.py'), str(path), str(queue)])
+            launcher = os.environ.get('MOSHI_CMUX_LAUNCHER', str(Path.home() / '.local/bin/moshi-cmux'))
+            start = shlex.join([launcher, '--mirror', str(path), str(queue)])
             row = by_surface.get(sid)
             fresh = row is None
             if not session:
@@ -222,7 +279,7 @@ def sync(data):
                     group['name'] = f'{base_name}-{suffix}'
                     suffix += 1
                 created = tmux('new-session', '-d', '-P', '-F', '#{session_id}\t#{window_id}\t#{pane_id}',
-                               '-s', group['name'], '-n', surface['title'] or 'terminal', start).stdout.strip().split('\t')
+                               '-s', group['name'], '-n', window_title(surface['title']), start).stdout.strip().split('\t')
                 session, wid, pid = created
                 tmux('set-option', '-t', session, OWNER, group['key'])
                 tmux('set-option', '-t', session, 'base-index', '0')
@@ -231,15 +288,19 @@ def sync(data):
                 sessions[group['key']] = session
                 if row:
                     # Preserve the old pane ID (agent bindings) while moving between groups.
-                    move_owned_window(row, session)
-                    tmux('kill-window', '-t', wid)
+                    try:
+                        move_owned_window(row, session)
+                    finally:
+                        # A failed move must not leave a duplicate temporary
+                        # mirror occupying index 0 and block the next retry.
+                        tmux('kill-window', '-t', wid)
                 else:
-                    row = dict(session=session, name=group['name'], window=wid, pane=pid, dead='0', title=surface['title'], index=tmux('display-message', '-p', '-t', wid, '#{window_index}').stdout.strip())
+                    row = dict(session=session, name=group['name'], window=wid, pane=pid, dead='0', title=window_title(surface['title']), index=tmux('display-message', '-p', '-t', wid, '#{window_index}').stdout.strip())
                     by_surface[sid] = row
             if not row:
                 wid, pid = tmux('new-window', '-d', '-P', '-F', '#{window_id}\t#{pane_id}',
-                                '-t', session+':', '-n', surface['title'] or 'terminal', start).stdout.strip().split('\t')
-                row = dict(session=session, name=group['name'], window=wid, pane=pid, dead='0', title=surface['title'], index=tmux('display-message', '-p', '-t', wid, '#{window_index}').stdout.strip())
+                                '-t', session+':', '-n', window_title(surface['title']), start).stdout.strip().split('\t')
+                row = dict(session=session, name=group['name'], window=wid, pane=pid, dead='0', title=window_title(surface['title']), index=tmux('display-message', '-p', '-t', wid, '#{window_index}').stdout.strip())
                 by_surface[sid] = row
             elif row['session'] != session:
                 move_owned_window(row, session)
@@ -253,8 +314,8 @@ def sync(data):
             if row.get('keep') != 'on':
                 tmux('set-option', '-w', '-t', row['window'], 'remain-on-exit', 'on')
                 row['keep'] = 'on'
-            if row['title'] != surface['title']:
-                tmux('rename-window', '-t', row['window'], surface['title'] or 'terminal')
+            if row['title'] != window_title(surface['title']):
+                tmux('rename-window', '-t', row['window'], window_title(surface['title']))
             if row['dead'] == '1' or row['pane'] in respawn:
                 tmux('respawn-pane', '-k', '-t', row['pane'], start)
             state.update(tmux_session=next((r['name'] for r in rows if r['session'] == session), group['name']),
@@ -298,18 +359,42 @@ def watch_visibility(stop):
         stop.wait(interval)
 
 
+def health(data):
+    surfaces = {s['id'] for group in groups(data) for s in group['surfaces']}
+    rows = [r for r in inventory() if r['group'] and r['surface'] in surfaces]
+    dead = sum(r['dead'] == '1' for r in rows)
+    missing = len(surfaces - {r['surface'] for r in rows})
+    duplicates = len(rows) - len({r['surface'] for r in rows})
+    sample = load(STATE / 'visibility.json')
+    updated = sample.get('updated')
+    age = time.time() - updated if isinstance(updated, (int, float)) and math.isfinite(updated) else None
+    return dict(healthy=not dead and not missing and not duplicates and age is not None and 0 <= age < 5,
+                runtime=sys.executable, terminal_surfaces=len(surfaces),
+                mirrors=len(rows), dead_mirrors=dead, unmapped_surfaces=missing, duplicate_mirrors=duplicates,
+                visibility_age_seconds=round(age, 2) if age is not None else None)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--watch', action='store_true')
     parser.add_argument('--hook', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--event', action='store_true', help='read only the hook event name')
+    parser.add_argument('--status', action='store_true', help='read bridge health without repairing panes')
     args = parser.parse_args()
+    if args.event:
+        print(json.load(sys.stdin).get('hook_event_name') or '')
+        return 0
     payload = sys.stdin.read() if args.hook else ''
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
     if args.watch and not args.dry_run:
         threading.Thread(target=watch_visibility, args=(threading.Event(),), daemon=True).start()
     while True:
         try:
+            if args.status:
+                status = health(tree())
+                print(json.dumps(status))
+                return 0 if status['healthy'] else 1
             if args.dry_run:
                 data = tree()
                 print(json.dumps([{'session': g['name'], 'tabs': len(g['surfaces'])} for g in groups(data)], indent=2))

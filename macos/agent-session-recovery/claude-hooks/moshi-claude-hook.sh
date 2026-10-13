@@ -20,7 +20,7 @@ if [ -n "${CMUX_SURFACE_ID:-}" ] && [ -z "${TMUX_PANE:-}" ] &&
   exit $?
 fi
 
-event=$(printf '%s' "$input" | /usr/bin/python3 -c 'import sys,json; print(json.load(sys.stdin).get("hook_event_name") or "")' 2>/dev/null || true)
+event=$(printf '%s' "$input" | "$HOME/.local/bin/moshi-cmux" --event 2>/dev/null || true)
 
 forward_local() {
   case "$event" in

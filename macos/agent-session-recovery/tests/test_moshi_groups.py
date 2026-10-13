@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real isolated tmux tests. No user terminals, hooks, or pairing are used."""
 import importlib.util
+import copy
 import errno
 import fcntl
 import json
@@ -36,7 +37,11 @@ class VisibilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {'TMUX': 'test,1,0', 'TMUX_PANE': '%2'}):
             path = Path(tmp) / 'visibility.json'
             for content in (None, '{bad json', json.dumps({'updated': time.time()-12, 'panes': []}),
-                            json.dumps({'updated': time.time()-12, 'panes': ['%2'], 'activity': time.time()})):
+                            json.dumps({'updated': time.time()-12, 'panes': ['%2'], 'activity': time.time()}),
+                            '[]', 'null', json.dumps({'updated': 'bad', 'panes': ['%2']}),
+                            json.dumps({'updated': time.time(), 'panes': '%2'}),
+                            json.dumps({'updated': time.time(), 'panes': ['%2'], 'activity': 'bad'}),
+                            json.dumps({'updated': float('nan'), 'panes': ['%2']})):
                 if content is not None:
                     path.write_text(content)
                 with patch.object(mirror.subprocess, 'check_output', return_value='') as calls:
@@ -71,6 +76,8 @@ class GroupTests(unittest.TestCase):
         self.env = os.environ.copy()
         os.environ['TMUX_SOCKET'] = self.socket
         os.environ['MOSHI_GROUP_STATE_DIR'] = str(self.path/'state')
+        os.environ['MOSHI_CMUX_LAUNCHER'] = str(ROOT/'bin/moshi-cmux')
+        os.environ['MOSHI_CMUX_ROOT'] = str(ROOT/'claude-hooks')
         self.fake = self.path/'cmux'
         self.fake.write_text('''#!/usr/bin/env python3
 import json,os,sys
@@ -184,7 +191,7 @@ else:
         self.assertEqual(adopted[new_sid][2]['window'],wid)
         self.assertEqual(adopted[new_sid][2]['pane'],pid)
         self.assertEqual(self.tmux('show-options','-wqv','-t',wid,self.mod.SURFACE),new_sid)
-        self.assertIn('moshi-cmux-mirror.py',self.tmux('display-message','-p','-t',pid,'#{pane_start_command}'))
+        self.assertIn('moshi-cmux --mirror',self.tmux('display-message','-p','-t',pid,'#{pane_start_command}'))
         # cmux's tree now contains the tab; later syncs neither create again nor duplicate windows.
         self.data=json.loads((self.path/'tree.json').read_text())
         self.mod.sync(self.data)
@@ -275,6 +282,110 @@ else:
                          '0 Tab A\n1 Tab B')
         self.assertEqual(self.tmux('display-message', '-p', '-t', 'unrelated:', '#{pane_pid}'), unrelated_pid)
         self.mod.sync(self.data)
+
+    def test_malformed_future_tree_preserves_all_existing_panes(self):
+        self.mod.sync(self.data)
+        before = self.tmux('list-panes', '-a', '-F', '#{pane_id} #{pane_pid}')
+        mutations = [lambda d: d['windows'][0]['workspaces'][0].pop('panes'),
+                     lambda d: d['windows'][0]['workspaces'][0]['panes'][0].update(surfaces=None),
+                     lambda d: d['windows'][0]['workspaces'][0]['panes'][0]['surfaces'][0].pop('type'),
+                     lambda d: d['windows'][0]['workspaces'][0]['panes'][0]['surfaces'][1].update(id='A')]
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                data = copy.deepcopy(self.data)
+                mutate(data)
+                with self.assertRaises(ValueError):
+                    self.mod.sync(data)
+                self.assertEqual(self.tmux('list-panes', '-a', '-F', '#{pane_id} #{pane_pid}'), before)
+
+    def test_interrupted_group_move_recovers_without_extra_windows(self):
+        from unittest.mock import patch
+        first = self.mod.sync(self.data)
+        original = {sid: binding[2]['pane'] for sid,binding in first.items()}
+        self.data['windows'][0]['workspaces'][0]['panes'][0]['id'] = 'REBUILT-P1'
+        move = self.mod.move_owned_window
+        def interrupted(row, session):
+            move(row, session)
+            raise RuntimeError('interrupted after move')
+        with patch.object(self.mod, 'move_owned_window', side_effect=interrupted):
+            with self.assertRaisesRegex(RuntimeError, 'interrupted after move'):
+                self.mod.sync(self.data)
+        again = self.mod.sync(self.data)
+        self.assertEqual(original, {sid: binding[2]['pane'] for sid,binding in again.items()})
+        self.assertEqual(len(self.mod.inventory()), 5)  # four mirrors and the unrelated pane
+
+    def test_input_queued_during_slow_runtime_startup_is_preserved(self):
+        runtime = self.path / 'runtime'
+        runtime.mkdir()
+        python = runtime / 'python3'
+        python.write_text('#!/bin/sh\nsleep 0.5\nexec /usr/bin/python3 "$@"\n')
+        python.chmod(0o755)
+        self.tmux('set-environment', '-g', 'MOSHI_RUNTIME_DIRS', str(runtime))
+        self.test_prefix_swipes_input_and_visible_only_viewport()
+
+    def test_respawn_rediscover_runtime_after_watchers_interpreter_is_removed(self):
+        from unittest.mock import patch
+        first = self.mod.sync(self.data)
+        pane = first['B'][2]['pane']
+        self.tmux('respawn-pane', '-k', '-t', pane, 'true')
+        time.sleep(.2)
+        with patch.object(self.mod.sys, 'executable', '/removed-by-update/python3'):
+            again = self.mod.sync(self.data)
+        time.sleep(.5)
+        self.assertEqual(again['B'][2]['pane'], pane)
+        self.assertEqual(self.tmux('display-message', '-p', '-t', pane, '#{pane_dead}'), '0')
+        self.assertIn('moshi-cmux --mirror', self.tmux('display-message', '-p', '-t', pane, '#{pane_start_command}'))
+
+    def test_health_reports_dead_missing_and_stale_without_repairing(self):
+        first = self.mod.sync(self.data)
+        self.visibility_stop.set()
+        self.visibility_thread.join(timeout=12)
+        sample = self.mod.STATE / 'visibility.json'
+        self.mod.atomic(sample, {'updated': time.time(), 'panes': [], 'activity': 0})
+        self.assertTrue(self.mod.health(self.data)['healthy'])
+        pane = first['B'][2]['pane']
+        self.tmux('respawn-pane', '-k', '-t', pane, 'true')
+        time.sleep(.2)
+        status = self.mod.health(self.data)
+        self.assertFalse(status['healthy'])
+        self.assertEqual(status['dead_mirrors'], 1)
+        self.assertEqual(self.tmux('display-message', '-p', '-t', pane, '#{pane_dead}'), '1')
+        self.mod.sync(self.data)
+        self.mod.atomic(sample, {'updated': time.time() - 60, 'panes': [], 'activity': 0})
+        self.assertFalse(self.mod.health(self.data)['healthy'])
+        self.tmux('kill-window', '-t', first['C'][2]['window'])
+        self.assertEqual(self.mod.health(self.data)['unmapped_surfaces'], 1)
+
+    def test_tab_in_title_never_duplicates_owned_windows(self):
+        self.data['windows'][0]['workspaces'][0]['panes'][0]['surfaces'][0]['title'] = 'Title\twith tab'
+        first = self.mod.sync(self.data)
+        again = self.mod.sync(self.data)
+        self.assertEqual({s: b[2]['pane'] for s,b in first.items()}, {s: b[2]['pane'] for s,b in again.items()})
+
+    def test_new_surface_types_preserve_existing_mirrors_and_other_tabs_still_sync(self):
+        first = self.mod.sync(self.data)
+        pane = first['A'][2]['pane']
+        pid = self.tmux('display-message', '-p', '-t', pane, '#{pane_pid}')
+        surfaces = self.data['windows'][0]['workspaces'][0]['panes'][0]['surfaces']
+        surfaces[0]['type'] = 'future-terminal'
+        surfaces[1]['title'] = 'Updated B'
+        self.mod.sync(self.data)
+        self.assertEqual(self.tmux('display-message', '-p', '-t', pane, '#{pane_pid}'), pid)
+        self.assertEqual(self.tmux('display-message', '-p', '-t', first['B'][2]['pane'], '#{window_name}'), 'Updated B')
+
+    def test_tmux_inventory_failure_is_not_an_empty_server(self):
+        from unittest.mock import patch
+        self.mod.sync(self.data)
+        before = self.tmux('list-panes', '-a', '-F', '#{pane_id} #{pane_pid}')
+        original = self.mod.tmux
+        def unavailable(*args, **kwargs):
+            if args[0] == 'list-windows':
+                return subprocess.CompletedProcess(args, 1, stdout='', stderr='permission denied')
+            return original(*args, **kwargs)
+        with patch.object(self.mod, 'tmux', side_effect=unavailable):
+            with self.assertRaises(RuntimeError):
+                self.mod.sync(self.data)
+        self.assertEqual(self.tmux('list-panes', '-a', '-F', '#{pane_id} #{pane_pid}'), before)
 
     def test_hook_runs_in_correct_grouped_pane(self):
         bindings=self.mod.sync(self.data)

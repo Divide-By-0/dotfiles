@@ -37,11 +37,21 @@ headless invocations have no eligible terminal and remain silent.
 
 The Moshi watcher, cmux Claude hook and tmux new-window hook all use the
 installed `~/.local/bin/moshi-cmux` launcher. It runs the stdlib-only bridge
-with `/usr/bin/python3`, independent of Homebrew's removable `python3` link
-and the caller's Conda/pyenv PATH. The watcher respawns dead owned mirrors on
+with macOS Python, rediscovering compatible versioned Homebrew runtimes if
+necessary. Isolated Python mode excludes the caller's Conda/pyenv settings,
+`PYTHONHOME`, `PYTHONPATH` and user packages. Mirrors also restart through this
+launcher rather than a saved interpreter path. The watcher respawns dead owned mirrors on
 its next reconciliation while preserving their pane IDs and unrelated agents.
 `moshi-cmux --dry-run` checks cmux connectivity without changing any panes.
 The LaunchAgent retains the PTY-capacity gate before starting the watcher.
+`moshi-cmux --status` reports dead or missing mirrors, stale visibility and the
+selected runtime without modifying panes; it exits nonzero when unhealthy.
+Missing/incompatible runtimes produce an explicit configuration error.
+Incomplete or unsupported cmux schemas and failed tmux inventories preserve
+existing panes. New surface types preserve existing mappings while known
+terminal tabs keep synchronizing. Control characters in titles are normalized only for tmux names;
+original titles stay in bridge state. Interrupted moves clean up their temporary
+mirror, and raw-mode startup preserves keys typed while a runtime is starting.
 
 Moshi mirrors report the visible phone pane's width and height to cmux using
 `client_id`, `viewport_columns`, and `viewport_rows` on `terminal.replay`.
