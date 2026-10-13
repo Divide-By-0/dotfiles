@@ -1,11 +1,14 @@
 name: Codex network recovery
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths: ['macos/codex-network-recovery/**', '.github/workflows/codex-network-recovery.yml']
   push:
+    branches: ['master']
     paths: ['macos/codex-network-recovery/**', '.github/workflows/codex-network-recovery.yml']
 jobs:
   recovery:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
