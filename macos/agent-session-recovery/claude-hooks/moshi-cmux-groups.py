@@ -164,6 +164,14 @@ def adopt_new_windows(desired, rows, by_surface):
     return respawn
 
 
+def move_owned_window(row, session):
+    # Let tmux choose a free slot. A fixed staging index collides when multiple
+    # surviving surface windows move into a rebuilt cmux strip in the same pass.
+    tmux('move-window', '-d', '-s', row['window'], '-t', session+':')
+    row['session'] = session
+    row['index'] = tmux('display-message', '-p', '-t', row['window'], '#{window_index}').stdout.strip()
+
+
 def sync(data):
     desired = groups(data)
     rows = inventory()
@@ -223,10 +231,8 @@ def sync(data):
                 sessions[group['key']] = session
                 if row:
                     # Preserve the old pane ID (agent bindings) while moving between groups.
-                    tmux('move-window', '-d', '-s', row['window'], '-t', session+':10000')
+                    move_owned_window(row, session)
                     tmux('kill-window', '-t', wid)
-                    row['session'] = session
-                    row['index'] = '10000'
                 else:
                     row = dict(session=session, name=group['name'], window=wid, pane=pid, dead='0', title=surface['title'], index=tmux('display-message', '-p', '-t', wid, '#{window_index}').stdout.strip())
                     by_surface[sid] = row
@@ -236,9 +242,7 @@ def sync(data):
                 row = dict(session=session, name=group['name'], window=wid, pane=pid, dead='0', title=surface['title'], index=tmux('display-message', '-p', '-t', wid, '#{window_index}').stdout.strip())
                 by_surface[sid] = row
             elif row['session'] != session:
-                tmux('move-window', '-d', '-s', row['window'], '-t', session+':10000')
-                row['session'] = session
-                row['index'] = '10000'
+                move_owned_window(row, session)
             if fresh:
                 tmux('set-option', '-w', '-t', row['window'], SURFACE, sid)
                 tmux('set-option', '-w', '-t', row['window'], 'automatic-rename', 'off')

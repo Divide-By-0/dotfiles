@@ -263,6 +263,19 @@ else:
             self.assertLess(time.monotonic()-start,5)
         self.assertEqual([r for r in self.mod.inventory() if r['group']],[])
 
+    def test_rebuilt_group_moves_multiple_tabs_without_slot_collision(self):
+        first = self.mod.sync(self.data)
+        original = {sid: binding[2]['pane'] for sid, binding in first.items()}
+        unrelated_pid = self.tmux('display-message', '-p', '-t', 'unrelated:', '#{pane_pid}')
+        # A restored cmux strip can retain surface IDs but receive a new pane ID.
+        self.data['windows'][0]['workspaces'][0]['panes'][0]['id'] = 'REBUILT-P1'
+        again = self.mod.sync(self.data)
+        self.assertEqual(original, {sid: binding[2]['pane'] for sid, binding in again.items()})
+        self.assertEqual(self.tmux('list-windows', '-t', again['A'][2]['session'], '-F', '#{window_index} #{window_name}'),
+                         '0 Tab A\n1 Tab B')
+        self.assertEqual(self.tmux('display-message', '-p', '-t', 'unrelated:', '#{pane_pid}'), unrelated_pid)
+        self.mod.sync(self.data)
+
     def test_hook_runs_in_correct_grouped_pane(self):
         bindings=self.mod.sync(self.data)
         env=os.environ.copy();env['CMUX_SURFACE_ID']='B'
