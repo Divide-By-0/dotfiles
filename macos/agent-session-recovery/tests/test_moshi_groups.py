@@ -180,7 +180,17 @@ else:
         first=self.mod.sync(self.data)
         session=first['A'][2]['session']
         wid,pid=self.tmux('new-window','-d','-P','-F','#{window_id} #{pane_id}','-t',session+':','/bin/sh').split()
-        adopted=self.mod.sync(self.data)
+        # new-window returns before its child necessarily execs the idle shell.
+        # Production deliberately skips a pane while its process is ambiguous;
+        # the watcher retries. Wait for that contract rather than reading a
+        # receipt that may not exist yet on a busy machine.
+        deadline = time.monotonic() + 5
+        while True:
+            adopted = self.mod.sync(self.data)
+            if any(s.startswith('NEW') for s in adopted):
+                break
+            self.assertLess(time.monotonic(), deadline, 'idle phone shell was not adopted')
+            time.sleep(.05)
         calls=[json.loads(l) for l in (self.path/'calls.jsonl').read_text().splitlines()]
         creates=[json.loads(c[1]) for c in calls if c[0]=='surface.create']
         self.assertEqual(len(creates),1)
