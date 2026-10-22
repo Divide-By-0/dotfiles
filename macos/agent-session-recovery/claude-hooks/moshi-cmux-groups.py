@@ -330,9 +330,13 @@ def sync(data):
                 continue
             dest = session+':'+str(position)
             occupant = next((r for r in by_surface.values() if r['session'] == session and r['index'] == str(position)), None)
-            if occupant:
+            # A phone-created window can occupy this index without a surface
+            # binding. Swap it intact instead of failing a move into its slot.
+            occupied = tmux('display-message', '-p', '-t', dest, '#{window_id}', check=False).returncode == 0
+            if occupied:
                 tmux('swap-window', '-d', '-s', wid, '-t', dest)
-                occupant['index'] = current
+                if occupant:
+                    occupant['index'] = current
             else:
                 tmux('move-window', '-d', '-s', wid, '-t', dest)
             by_surface[surface['id']]['index'] = str(position)

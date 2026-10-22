@@ -441,6 +441,23 @@ else:
         panes={s:b[2]['pane'] for s,b in bindings.items()}
         self.assertEqual(panes,{s:b[2]['pane'] for s,b in self.mod.sync(self.data).items()})
 
+    def test_unowned_window_at_desired_index_is_swapped_without_killing_its_pane(self):
+        bindings = self.mod.sync(self.data)
+        b = bindings['B'][2]
+        session = b['session']
+        self.tmux('move-window', '-d', '-s', b['window'], '-t', session+':3')
+        unowned = self.tmux('new-window', '-d', '-P', '-F', '#{window_id}\t#{pane_id}',
+                            '-t', session+':1', '-n', 'phone shell', 'sleep 120').split('\t')
+        repaired = self.mod.sync(self.data)
+        self.assertEqual(repaired['B'][2]['window'], b['window'])
+        self.assertEqual(repaired['B'][2]['pane'], b['pane'])
+        self.assertEqual(self.tmux('display-message', '-p', '-t', b['window'], '#{window_index}'), '1')
+        self.assertEqual(self.tmux('display-message', '-p', '-t', unowned[0], '#{window_index}'), '3')
+        self.assertEqual(self.tmux('display-message', '-p', '-t', unowned[0], '#{pane_id}'), unowned[1])
+        self.assertEqual(self.tmux('display-message', '-p', '-t', unowned[0], '#{pane_dead}'), '0')
+        self.mod.sync(self.data)
+        self.assertEqual(self.tmux('display-message', '-p', '-t', unowned[0], '#{window_index}'), '3')
+
     def test_tree_failure_preserves_existing_views(self):
         self.mod.sync(self.data)
         before=self.tmux('list-panes','-a','-F','#{pane_id}')
