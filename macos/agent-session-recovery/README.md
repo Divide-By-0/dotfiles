@@ -66,6 +66,26 @@ scrollback. Releasing on every swipe stacked ~40 phone-width copies in one tab
 (2026-09-28), which looked like corrupted output when scrolling up in cmux. Other clients'
 viewport reports remain independent.
 
+The replay lease is renewed while reading scrollback as well as while viewing
+live output. Phone rotation and keyboard resize bursts settle for 150 ms before
+the new size is applied, and history is repainted at the settled dimensions.
+Failed viewport clears remain queued across detach or rebinding and retry once
+per second; normal exit makes up to three cleanup attempts. Returning to a
+surface cancels its pending clear so a late retry cannot undo a new attachment.
+Hold/retry timers use monotonic elapsed time. Desktop restoration removes only
+the mirror's own report, allowing cmux to recompute its current native size
+without overwriting another client's viewport or restoring an obsolete size.
+
+`tests/test_mirror_viewport.py` exercises the real mirror loop with controlled
+time and an expiring viewport RPC model, including failed clears and rotation
+while scrolled. It runs in CI alongside the existing grouping and scroll tests.
+For native validation, initialize a disposable single-shell workspace named
+`Moshi viewport test (temporary)` and run
+`python3 tests/live_mirror_viewport.py --workspace <UUID>` from this directory.
+The smoke checks native sizing during scrollback, rotation, transient cleanup
+failure, reconnect, normal exit, SIGKILL expiry, and another client's viewport.
+It never restarts cmux or targets existing working terminals.
+
 Moshi needs a tmux pane through which it can mirror a cmux terminal. These helper sessions use the human tab title plus the agent directory basename:
 
 ```text

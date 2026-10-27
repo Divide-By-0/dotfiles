@@ -92,11 +92,12 @@ def term_size() -> tuple[int, int]:
     return cols, rows
 
 
-def clear_viewport(surface_id: str) -> None:
-    rpc(
+def clear_viewport(surface_id: str) -> bool:
+    result = rpc(
         "terminal.viewport",
         {"surface_id": surface_id, "client_id": VIEWPORT_CLIENT_ID, "clear": True},
     )
+    return "_error" not in result
 
 
 def replay_viewport(surface_id: str, cols: int, rows: int) -> dict:
@@ -110,6 +111,65 @@ def replay_viewport(surface_id: str, cols: int, rows: int) -> dict:
         "viewport_columns": cols,
         "viewport_rows": rows,
     })
+
+
+class ViewportLease:
+    """Own only this mirror's expiring report; retain failed clears for retry.
+
+    Renew independently of painting: reading scrollback must not let cmux
+    restore desktop width and then shrink it again on the next keystroke.
+    Clearing our client report lets cmux calculate the *current* desktop size
+    and respects any other client's report; never restore a saved old size.
+    """
+    REFRESH_SECONDS = 1.0
+    RETRY_SECONDS = 1.0
+
+    def __init__(self):
+        self.surface = None
+        self.pending = {}
+        self.last_refresh = float('-inf')
+        self.size = None
+
+    def release(self):
+        if self.surface:
+            self.pending[self.surface] = float('-inf')
+            self.surface = None
+            self.size = None
+
+    def renew(self, surface_id, cols, rows, now, *, paint=False):
+        if self.surface != surface_id:
+            self.release()
+            self.surface = surface_id
+            self.last_refresh = float('-inf')
+        # Returning to a surface supersedes its pending clear. A delayed retry
+        # must never remove the viewport we just reacquired.
+        self.pending.pop(surface_id, None)
+        if paint or self.size != (cols, rows) or now - self.last_refresh >= self.REFRESH_SECONDS:
+            # Record ownership even on RPC failure: cmux may have applied the
+            # request before the connection failed delivering the response.
+            self.size = (cols, rows)
+            self.last_refresh = now
+            return replay_viewport(surface_id, cols, rows)
+        return None
+
+    def retry_cleanup(self, now, *, force=False):
+        for surface_id, attempted_at in list(self.pending.items()):
+            if force or now - attempted_at >= self.RETRY_SECONDS:
+                self.pending[surface_id] = now
+                if clear_viewport(surface_id):
+                    self.pending.pop(surface_id, None)
+                    log(f"mirror released desktop size surface={surface_id}")
+
+    def close(self):
+        self.release()
+        # Normal exit gets bounded retries; an unresponsive server or SIGKILL
+        # still falls back to cmux's expiring replay reports.
+        for attempt in range(3):
+            self.retry_cleanup(time.monotonic(), force=True)
+            if not self.pending:
+                break
+            if attempt < 2:
+                time.sleep(.1)
 
 
 def grid_fits(grid: dict, cols: int, rows: int) -> bool:
@@ -610,11 +670,12 @@ def main() -> int:
     last_name_refresh = 0.0
     last_idle_draw = 0.0
     was_attached = False
-    viewport_surface = None
+    viewport = ViewportLease()
     cols = rows = 0
+    pending_size = None
+    size_changed_at = 0.0
     key_buf = bytearray()
     last_visible: float | None = None
-    last_hold_refresh = 0.0
     scroll_offset = 0  # lines above live output; 0 means mirroring live
     scroll_dirty = False
     active_interval = 1.0 / max(args.fps, 1.0)
@@ -622,13 +683,16 @@ def main() -> int:
 
     try:
         while not stop:
+            now = time.monotonic()
             state = load_state(state_path)
             surface_id = state.get("surface_id") or ""
-            if viewport_surface and viewport_surface != surface_id:
-                clear_viewport(viewport_surface)
-                viewport_surface = None
+            if viewport.surface and viewport.surface != surface_id:
+                viewport.release()
                 last_rev = last_epoch = last_seq = None
+                scroll_offset = 0
+                scroll_dirty = False
             if not surface_id:
+                viewport.retry_cleanup(now)
                 sys.stdout.write(
                     "\x1b[H\x1b[JMoshi ↔ cmux mirror\r\n"
                     "Waiting for cmux surface binding…\r\n"
@@ -638,7 +702,6 @@ def main() -> int:
                 time.sleep(idle_interval)
                 continue
 
-            now = time.time()
             if now - last_name_refresh >= 120:
                 refresh_names(state, state_path)
                 state = load_state(state_path)
@@ -646,6 +709,11 @@ def main() -> int:
 
             visibility_path = state_path.parent / "visibility.json" if state.get("grouped") else None
             attached, phone_active = phone_state(visibility_path)
+            if attached:
+                # Cancel a failed detach clear *before* retrying cleanup. The
+                # phone may already be back on that same surface this tick.
+                viewport.pending.pop(surface_id, None)
+            viewport.retry_cleanup(now)
             if attached:
                 last_visible = now
             action = viewport_action(now, attached, phone_active, last_visible)
@@ -665,16 +733,13 @@ def main() -> int:
             was_attached = attached
 
             if not attached:
-                if action == "hold" and viewport_surface:
+                if action == "hold" and viewport.surface:
                     # Replay reports expire unless refreshed; keep the phone size
                     # alive without painting so a swipe back needs no resize.
-                    if now - last_hold_refresh >= 2:
-                        replay_viewport(viewport_surface, cols, rows)
-                        last_hold_refresh = now
-                elif viewport_surface:
-                    clear_viewport(viewport_surface)
-                    log(f"mirror released desktop size surface={viewport_surface}")
-                    viewport_surface = None
+                    viewport.renew(viewport.surface, cols, rows, now)
+                elif viewport.surface:
+                    viewport.release()
+                    viewport.retry_cleanup(now)
                 if now - last_idle_draw >= 30:
                     draw_idle_status(state)
                     last_idle_draw = now
@@ -682,12 +747,23 @@ def main() -> int:
                 # tmux only sends input to the selected pane. Keep it queued
                 # until shared visibility catches up after a swipe; discarding
                 # here loses the first key typed on a newly visible phone tab.
-                time.sleep(.25 if visibility_path and visibility_path.exists() else idle_interval)
+                delay = .25 if visibility_path and visibility_path.exists() else idle_interval
+                if viewport.pending:
+                    delay = min(delay, viewport.RETRY_SECONDS)
+                time.sleep(delay)
                 continue
 
             local_cols, local_rows = term_size()
-            if winch["flag"] or (local_cols, local_rows) != (cols, rows):
+            if pending_size != (local_cols, local_rows):
+                pending_size = (local_cols, local_rows)
+                size_changed_at = now
+            # Initial attach is immediate; keyboard/rotation resize bursts settle
+            # before SIGWINCH reaches the real agent and pollutes its history.
+            if not cols or (pending_size != (cols, rows) and now - size_changed_at >= .15):
                 cols, rows = local_cols, local_rows
+                last_rev = last_epoch = last_seq = None
+                scroll_dirty = bool(scroll_offset)
+            if winch["flag"]:
                 last_rev = last_epoch = last_seq = None
             winch["flag"] = False
             paint_cols, paint_rows = cols, rows
@@ -720,7 +796,12 @@ def main() -> int:
                     # other mouse events (taps, drags) are dropped, never typed
 
             if scroll_offset:
-                if scroll_dirty:
+                replay = viewport.renew(surface_id, paint_cols, paint_rows, now, paint=scroll_dirty)
+                # A resize can apply before cmux has a frame at the new size.
+                # Keep history dirty and wait for reflow rather than painting
+                # once from the old-width buffer and leaving it clipped.
+                if (scroll_dirty and replay is not None and "_error" not in replay
+                        and grid_fits(replay.get("render_grid") or {}, paint_cols, paint_rows)):
                     frame, scroll_offset = scrollback_frame(surface_id, paint_cols, paint_rows, scroll_offset)
                     sys.stdout.write(frame)
                     sys.stdout.flush()
@@ -731,8 +812,7 @@ def main() -> int:
                 time.sleep(active_interval)
                 continue
 
-            viewport_surface = surface_id
-            replay = replay_viewport(surface_id, paint_cols, paint_rows)
+            replay = viewport.renew(surface_id, paint_cols, paint_rows, now, paint=True)
             if "_error" not in replay:
                 grid = replay.get("render_grid") or {}
                 cur_epoch = grid.get("render_epoch")
@@ -747,8 +827,7 @@ def main() -> int:
             drain_queue(queue_dir)
             time.sleep(active_interval)
     finally:
-        if viewport_surface:
-            clear_viewport(viewport_surface)
+        viewport.close()
         try:
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old)
         except termios.error:
