@@ -290,10 +290,17 @@ def build_frame(grid: dict, view_cols: int, view_rows: int) -> str:
                     line_styles[row][c] = ansi
 
     cursor = grid.get("cursor") or {}
-    out: list[str] = ["\x1b[H\x1b[J"]  # home + clear
+    # A clear exposes the phone's default background before styled cells arrive.
+    # Overwrite every cell inside one synchronized update instead; use the same
+    # native defaults for blank cells in live output and history.
+    base = "\x1b[0m" + style_ansi({
+        "foreground": grid.get("terminal_foreground"),
+        "background": grid.get("terminal_background"),
+    })
+    out: list[str] = ["\x1b[?2026h\x1b[?25l" + base]
     for r in range(view_rows):
         current = None
-        buf: list[str] = []
+        buf: list[str] = [f"\x1b[{r + 1};1H"]
         for c in range(view_cols):
             ch = lines[r][c]
             if ch == "":
@@ -301,16 +308,14 @@ def build_frame(grid: dict, view_cols: int, view_rows: int) -> str:
             a = line_styles[r][c]
             if a != current:
                 if current:
-                    buf.append("\x1b[0m")
+                    buf.append(base)
                 if a:
                     buf.append(a)
                 current = a
             buf.append(ch)
         if current:
-            buf.append("\x1b[0m")
+            buf.append(base)
         out.append("".join(buf))
-        if r != view_rows - 1:
-            out.append("\r\n")
 
     if cursor.get("visible", True):
         cr = int(cursor.get("row") or 0)
@@ -322,6 +327,7 @@ def build_frame(grid: dict, view_cols: int, view_rows: int) -> str:
             out.append("\x1b[?25l")
     else:
         out.append("\x1b[?25l")
+    out.append("\x1b[?2026l")
     return "".join(out)
 
 
@@ -428,17 +434,44 @@ def scroll_window(lines: list[str], rows: int, offset: int) -> tuple[list[str], 
 
 def scrollback_frame(surface_id: str, cols: int, rows: int, offset: int) -> tuple[str, int]:
     body = max(1, rows - 1)
-    got = rpc("surface.read_text", {"surface_id": surface_id, "lines": body + offset})
-    lines = (got.get("text") or "").split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    visible, offset = scroll_window(lines, rows, offset)
-    out = ["\x1b[?25l\x1b[H\x1b[J"]
-    for n, line in enumerate(visible):
-        out.append(f"\x1b[{n + 1};1H" + line[:cols])
+    replay = rpc("terminal.replay", {
+        "surface_id": surface_id, "anchor": "screen",
+        "max_scrollback_rows": body + offset,
+    })
+    if "_error" in replay:
+        return "", offset  # Keep the last good frame/position on transient failure.
+    grid = replay.get("render_grid") or {}
+    if "scrollback_spans" in grid and "scrollback_rows" in grid:
+        # Native history rows are numbered from zero, independently of screen
+        # rows. Join their coordinate spaces before selecting the phone window.
+        history = int(grid["scrollback_rows"])
+        total = history + int(grid.get("rows") or rows)
+        offset = max(0, min(offset, max(0, total - body)))
+        start = max(0, total - offset - body)
+        spans = []
+        for source, shift in ((grid["scrollback_spans"], 0), (grid.get("row_spans") or [], history)):
+            for span in source:
+                row = int(span.get("row") or 0) + shift - start
+                if 0 <= row < body:
+                    spans.append(dict(span, row=row))
+    else:
+        # Older cmux versions only expose plain history. Preserve scrolling,
+        # but current servers always use styled replay above.
+        got = rpc("surface.read_text", {"surface_id": surface_id, "lines": body + offset})
+        if "_error" in got:
+            return "", offset
+        lines = (got.get("text") or "").split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
+        visible, offset = scroll_window(lines, rows, offset)
+        spans = [{"row": n, "column": 0, "text": line} for n, line in enumerate(visible)]
     status = f" scrollback -{offset} lines · scroll down or type to return "[:cols]
-    out.append(f"\x1b[{rows};1H\x1b[7m" + status.ljust(cols) + "\x1b[0m")
-    return "".join(out), offset
+    styles = list(grid.get("styles") or [])
+    status_id = max((s.get("id", -1) for s in styles), default=-1) + 1
+    styles.append({"id": status_id, "inverse": True})
+    spans.append({"row": rows - 1, "column": 0, "text": status.ljust(cols), "style_id": status_id})
+    frame = dict(grid, row_spans=spans, styles=styles, cursor={"visible": False})
+    return build_frame(frame, cols, rows), offset
 
 
 def forward_key(surface_id: str, key: bytes) -> None:
@@ -803,9 +836,10 @@ def main() -> int:
                 if (scroll_dirty and replay is not None and "_error" not in replay
                         and grid_fits(replay.get("render_grid") or {}, paint_cols, paint_rows)):
                     frame, scroll_offset = scrollback_frame(surface_id, paint_cols, paint_rows, scroll_offset)
-                    sys.stdout.write(frame)
-                    sys.stdout.flush()
-                    scroll_dirty = False
+                    if frame:
+                        sys.stdout.write(frame)
+                        sys.stdout.flush()
+                        scroll_dirty = False
                     if not scroll_offset:
                         last_rev = last_epoch = last_seq = None
                 drain_queue(queue_dir)
