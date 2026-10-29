@@ -37,7 +37,7 @@ socket='moshi-live-'+uuid.uuid4().hex
 client=None
 master=None
 watcher=None
-with tempfile.TemporaryDirectory(prefix='moshi-live-') as tmp:
+with tempfile.TemporaryDirectory(prefix='ml-', dir='/tmp') as tmp:
     path=Path(tmp)
     wrapper=path/'cmux'
     wrapper.write_text('''#!/usr/bin/env python3
@@ -53,7 +53,7 @@ else:
 '''.replace('TREE',repr(json.dumps({'windows':windows}))).replace('IDS',repr(ids)).replace('REAL',repr(real)))
     wrapper.chmod(0o755)
     env=os.environ.copy()
-    env.update(TMUX_SOCKET=socket,CMUX_BIN=str(wrapper),MOSHI_GROUP_STATE_DIR=str(path/'state'),MOSHI_LOG_PATH=str(path/'mirror.log'),TERM='xterm-256color')
+    env.update(TMUX_TMPDIR=str(path),TMUX_SOCKET=socket,CMUX_BIN=str(wrapper),MOSHI_GROUP_STATE_DIR=str(path/'state'),MOSHI_LOG_PATH=str(path/'mirror.log'),TERM='xterm-256color')
     env.update(MOSHI_CMUX_LAUNCHER=str(ROOT/'bin/moshi-cmux'),MOSHI_CMUX_ROOT=str(ROOT/'claude-hooks'))
     def tmux(*a): return subprocess.check_output(['tmux','-L',socket,*a],text=True,env=env).strip()
     try:
@@ -98,6 +98,6 @@ else:
     finally:
         if watcher:
             watcher.terminate();watcher.wait(timeout=12)
-        subprocess.run(['tmux','-L',socket,'kill-server'],capture_output=True)
+        subprocess.run(['tmux','-L',socket,'kill-server'],capture_output=True,env=env)
         if client: client.kill();client.wait()
         if master is not None: os.close(master)

@@ -70,10 +70,13 @@ class VisibilityTests(unittest.TestCase):
 
 class GroupTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(prefix="mg-", dir="/tmp")
         self.path = Path(self.tmp.name)
         self.socket = 'moshi-test-'+uuid.uuid4().hex
         self.env = os.environ.copy()
+        # Keep test servers outside the phone picker's socket directory.
+        # kill-server leaves its socket behind; TemporaryDirectory removes it.
+        os.environ['TMUX_TMPDIR'] = str(self.path)
         os.environ['TMUX_SOCKET'] = self.socket
         os.environ['MOSHI_GROUP_STATE_DIR'] = str(self.path/'state')
         os.environ['MOSHI_CMUX_LAUNCHER'] = str(ROOT/'bin/moshi-cmux')

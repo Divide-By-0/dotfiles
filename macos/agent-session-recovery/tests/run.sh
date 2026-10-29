@@ -4,12 +4,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/agent-session-recovery-tests.XXXXXX")"
 TMUX_TEST_SOCKET=""
+# Keep disposable sockets out of Moshi's default discovery directory, even
+# after kill-server leaves them behind. Short paths fit AF_UNIX limits.
+TMUX_TEST_ROOT="$(mktemp -d /tmp/mt.XXXXXX)"
+export TMUX_TMPDIR="$TMUX_TEST_ROOT"
 
 cleanup() {
   if [ -n "$TMUX_TEST_SOCKET" ]; then
     /opt/homebrew/bin/tmux -L "$TMUX_TEST_SOCKET" kill-server >/dev/null 2>&1 || true
   fi
-  rm -rf "$TMP_ROOT"
+  rm -rf "$TMP_ROOT" "$TMUX_TEST_ROOT"
 }
 trap cleanup EXIT
 

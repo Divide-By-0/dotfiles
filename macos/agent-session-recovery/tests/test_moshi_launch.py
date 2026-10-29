@@ -79,7 +79,7 @@ class LaunchTests(unittest.TestCase):
         if not tmux:
             self.skipTest('tmux required')
         socket = 'moshi-launch-' + uuid.uuid4().hex
-        command = [tmux, '-L', socket]
+        command = [tmux, '-S', str(self.home / 'tmux.sock')]
         self.addCleanup(lambda: subprocess.run(command + ['kill-server'], capture_output=True))
         hook = next(line for line in (ROOT / 'config/tmux-session-recovery.conf').read_text().splitlines()
                     if line.startswith("set-hook -g 'after-new-window[40]'"))
