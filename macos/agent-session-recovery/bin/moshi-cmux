@@ -1,0 +1,23 @@
+#!/bin/sh
+# One stdlib-only runtime for the watcher, hooks and every respawned mirror.
+set -eu
+root="${MOSHI_CMUX_ROOT:-$HOME/.claude/hooks}"
+script="$root/moshi-cmux-groups.py"
+if [ "${1:-}" = "--mirror" ]; then
+  shift
+  script="$root/moshi-cmux-mirror.py"
+fi
+# Prefer macOS Python; rediscover versioned Homebrew binaries if it disappears.
+# -I excludes unrelated Conda/pyenv/PYTHONHOME/PYTHONPATH and user-site packages.
+IFS=:
+for runtime_dir in ${MOSHI_RUNTIME_DIRS:-/usr/bin:/opt/homebrew/bin}; do
+  unset IFS
+  for runtime in "$runtime_dir/python3" "$runtime_dir"/python3.[0-9]*; do
+    [ -x "$runtime" ] || continue
+    if "$runtime" -I -c 'import sys,argparse,fcntl,hashlib,json,select,shlex,signal,subprocess,termios,threading,tty,uuid; sys.exit(0 if (3,9) <= sys.version_info[:2] < (4,0) else 1)' >/dev/null 2>&1; then
+      exec "$runtime" -I "$script" "$@"
+    fi
+  done
+done
+echo 'moshi-cmux: no compatible Python 3.9+ runtime; install Python or repair Command Line Tools (MOSHI_RUNTIME_DIRS overrides search directories).' >&2
+exit 78

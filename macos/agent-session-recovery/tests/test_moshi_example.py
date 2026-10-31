@@ -38,7 +38,7 @@ class ExampleTests(unittest.TestCase):
             demo.siblings(tree, 'missing')
 
     def test_real_tmux_switching_input_and_display(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(prefix="me-", dir="/tmp") as tmp:
             path = Path(tmp)
             if LIVE:
                 tree = demo.rpc('system.tree')
@@ -70,7 +70,7 @@ else:
                 cmux = str(fake)
             socket = 'moshi-example-test-' + uuid.uuid4().hex
             client = master = None
-            with patch.dict(os.environ, TMUX_SOCKET=socket, CMUX_BIN=cmux, TERM='xterm-256color'):
+            with patch.dict(os.environ, TMUX_TMPDIR=str(path), TMUX_SOCKET=socket, CMUX_BIN=cmux, TERM='xterm-256color'):
                 try:
                     demo.tmux('-f', '/dev/null', 'new-session', '-d', '-s', 'anchor', 'sleep 120')
                     demo.tmux('set-option', '-g', 'remain-on-exit', 'on')

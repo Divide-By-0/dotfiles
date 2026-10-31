@@ -1,18 +1,29 @@
 name: Moshi cmux integration
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths: ['macos/agent-session-recovery/**', '.github/workflows/moshi-cmux.yml']
   push:
+    branches: ['master']
     paths: ['macos/agent-session-recovery/**', '.github/workflows/moshi-cmux.yml']
 jobs:
   grouped-tabs:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.9', '3.14']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
+      - run: echo "MOSHI_RUNTIME_DIRS=$pythonLocation/bin" >> "$GITHUB_ENV"
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_groups.py -v
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_mirror_viewport.py -v
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_mirror_scroll.py -v
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_pty_capacity.py -v
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_launch.py -v
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_example.py -v
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_claude_titles.py -v
