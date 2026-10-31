@@ -332,9 +332,18 @@ def sync(data):
             occupant = next((r for r in by_surface.values() if r['session'] == session and r['index'] == str(position)), None)
             # A phone-created window can occupy this index without a surface
             # binding. Swap it intact instead of failing a move into its slot.
-            occupied = tmux('display-message', '-p', '-t', dest, '#{window_id}', check=False).returncode == 0
-            if occupied:
-                tmux('swap-window', '-d', '-s', wid, '-t', dest)
+            # display-message succeeds for a missing index by falling back to
+            # the selected window. Enumerate actual slots instead (AGENTS-528).
+            slots = dict(line.split('\t', 1) for line in tmux(
+                'list-windows', '-t', session, '-F', '#{window_index}\t#{window_id}').stdout.splitlines())
+            target = slots.get(str(position))
+            if target:
+                swap = f'swap-window -d -s {wid} -t {target}'
+                # -d retains the selected *index* when the destination is
+                # active. Follow its stable ID instead, atomically in tmux's
+                # command queue so a phone swipe cannot race a Python readback.
+                tmux('if-shell', '-F', '-t', target, '#{window_active}',
+                     swap + f' ; select-window -t {target}', swap)
                 if occupant:
                     occupant['index'] = current
             else:

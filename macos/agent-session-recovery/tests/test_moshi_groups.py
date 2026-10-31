@@ -461,6 +461,27 @@ else:
         self.mod.sync(self.data)
         self.assertEqual(self.tmux('display-message', '-p', '-t', unowned[0], '#{window_index}'), '3')
 
+    def test_missing_index_is_not_mistaken_for_selected_window(self):
+        bindings = self.mod.sync(self.data)
+        a, b = bindings['A'][2], bindings['B'][2]
+        self.tmux('move-window', '-d', '-s', b['window'], '-t', b['session']+':3')
+        self.tmux('select-window', '-t', a['window'])
+        self.mod.sync(self.data)
+        self.assertEqual(self.tmux('display-message', '-p', '-t', b['window'], '#{window_index}'), '1')
+
+    def test_reorder_keeps_selected_window_identity(self):
+        bindings = self.mod.sync(self.data)
+        a, b = bindings['A'][2], bindings['B'][2]
+        surfaces = self.data['windows'][0]['workspaces'][0]['panes'][0]['surfaces']
+        for selected in (a, b):
+            with self.subTest(selected=selected['window']):
+                surfaces[0]['index_in_pane'], surfaces[1]['index_in_pane'] = 0, 1
+                self.mod.sync(self.data)
+                self.tmux('select-window', '-t', selected['window'])
+                surfaces[0]['index_in_pane'], surfaces[1]['index_in_pane'] = 1, 0
+                self.mod.sync(self.data)
+                self.assertEqual(self.tmux('display-message', '-p', '-t', a['session'], '#{window_id}'), selected['window'])
+
     def test_tree_failure_preserves_existing_views(self):
         self.mod.sync(self.data)
         before=self.tmux('list-panes','-a','-F','#{pane_id}')
