@@ -43,6 +43,13 @@ class ParseTests(unittest.TestCase):
                          [b'\x1b[5~', b'\x1bOA', b'\x1b[1;5C', b'\x1b'])
 
 
+class ControlInputTests(unittest.TestCase):
+    def test_ctrl_c_preserves_original_byte_for_kitty_applications(self):
+        with patch.object(mirror, 'rpc', return_value={}) as rpc:
+            mirror.forward_key('surface-test', b'\x03')
+        rpc.assert_called_once_with('terminal.input', {'surface_id': 'surface-test', 'text': '\x03'})
+
+
 class WindowTests(unittest.TestCase):
     lines = [f'line {i}' for i in range(100)]
 

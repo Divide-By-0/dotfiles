@@ -20,6 +20,7 @@ import uuid
 ROOT=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--workspace',required=True)
+parser.add_argument('--codex-interrupt', action='store_true', help='Start an idle Codex TUI and verify two Ctrl+C presses exit it; sends no model prompt')
 args=parser.parse_args()
 real='/opt/homebrew/bin/cmux'
 data=json.loads(subprocess.check_output([real,'rpc','system.tree','{}']))
@@ -48,7 +49,7 @@ if method=='system.tree':
 else:
  params=json.loads(sys.argv[3])
  assert params['surface_id'] in IDS
- assert method in {'terminal.replay','terminal.viewport','surface.send_key','surface.send_text'}
+ assert method in {'terminal.replay','terminal.viewport','surface.send_key','surface.send_text','terminal.input'}
  subprocess.run([REAL,*sys.argv[1:]],check=True)
 '''.replace('TREE',repr(json.dumps({'windows':windows}))).replace('IDS',repr(ids)).replace('REAL',repr(real)))
     wrapper.chmod(0o755)
@@ -89,12 +90,25 @@ else:
         time.sleep(2)
         os.write(master,b"printf 'MOSHI_REAL_TAB_A_OK\\n'\r")
         wait(lambda:'MOSHI_REAL_TAB_A_OK' in tmux('capture-pane','-p','-t',a['tmux_pane']))
+        if args.codex_interrupt:
+            # The shell prints the marker *after* Codex exits. Never type a
+            # follow-up command that a still-running Codex could treat as a prompt.
+            subprocess.check_output([real, 'rpc', 'surface.send_text', json.dumps({
+                'surface_id': ids[0], 'text': "~/.local/bin/codex --no-alt-screen; printf '\\115OSHI_CODEX_EXITED\\n'\n"})])
+            wait(lambda: 'OpenAI Codex' in tmux('capture-pane', '-p', '-t', a['tmux_pane']))
+            # The banner can precede Codex's input initialization; early keys
+            # are flushed during its raw-mode setup. Wait for startup to settle.
+            time.sleep(8)
+            os.write(master, b'\x03')
+            time.sleep(.75)
+            os.write(master, b'\x03')
+            wait(lambda: 'MOSHI_CODEX_EXITED' in tmux('capture-pane', '-p', '-t', a['tmux_pane']))
         # Actual Moshi context resolves the grouped tmux window/pane.
         context_env=env.copy()
         context_env['TMUX']=tmux('display-message','-p','-t',a['tmux_pane'],'#{socket_path},#{pid},#{session_id}')
         context_env['TMUX_PANE']=a['tmux_pane']
         context=json.loads(subprocess.check_output(['/opt/homebrew/bin/moshi','context'],env=context_env,text=True))
-        print(json.dumps({'result':'PASS','tabs':2,'prefix_next_previous':True,'input_and_replay':True,'moshi_context':context}))
+        print(json.dumps({'result':'PASS','tabs':2,'prefix_next_previous':True,'input_and_replay':True,'codex_interrupt':args.codex_interrupt,'moshi_context':context}))
     finally:
         if watcher:
             watcher.terminate();watcher.wait(timeout=12)

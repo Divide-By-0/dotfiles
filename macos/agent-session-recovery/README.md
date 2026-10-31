@@ -197,7 +197,16 @@ A shared visibility sampler runs independently of topology reconciliation, once
 per second when idle and four times per second while a phone is active. Grouped
 mirrors stay idle if the sample is missing or stale; they never spawn their own
 fallback tmux queries. This prevents idle subprocess storms when sync is slow.
-The bridge preserves pane IDs across tab reorder/moves and updates titles.
+The bridge preserves pane IDs and the selected window across tab reorder/moves,
+including when an unbound phone window occupies a destination slot. Missing
+indexes are detected from the actual window inventory; tmux `display-message`
+can silently fall back to the selected window for a missing target.
+
+Ctrl+C is forwarded through `terminal.input` as its original byte. This avoids
+cmux named-key injection losing the control key under the Kitty keyboard
+protocol used by Codex. The optional native smoke flag `--codex-interrupt`
+starts an idle Codex TUI, waits for input initialization, and checks a shell
+marker emitted only after Ctrl+C exits Codex. It sends no model prompt.
 Old per-surface helper sessions are not automatically deleted: restored helpers
 may now contain user shells. The old helper names may remain in the picker;
 new hooks bind to the grouped `cmux-` sessions.
