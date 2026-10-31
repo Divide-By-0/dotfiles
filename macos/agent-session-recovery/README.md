@@ -192,6 +192,9 @@ gets no cmux tab while it runs.
 cmux topology every 15 seconds. Hook events also reconcile before enqueuing.
 Reconciliation uses a shared filesystem lock, atomic metadata writes, and
 explicit ownership tags; unavailable/malformed cmux state never triggers pruning.
+`--status` also checks each mirror's group and index against cmux, so live
+windows at the wrong indexes do not appear healthy. It reports unbound phone
+windows separately; these may contain active programs and are preserved.
 Only a pane visible to an attached client mirrors/resizes its real terminal.
 A shared visibility sampler runs independently of topology reconciliation, once
 per second when idle and four times per second while a phone is active. Grouped
@@ -202,8 +205,8 @@ including when an unbound phone window occupies a destination slot. Missing
 indexes are detected from the actual window inventory; tmux `display-message`
 can silently fall back to the selected window for a missing target.
 
-Ctrl+C is forwarded through `terminal.input` as its original byte. This avoids
-cmux named-key injection losing the control key under the Kitty keyboard
+Ctrl-letter keys are forwarded through `terminal.input` as their original bytes. This avoids
+cmux named-key injection losing control keys under the Kitty keyboard
 protocol used by Codex. The optional native smoke flag `--codex-interrupt`
 starts an idle Codex TUI, waits for input initialization, and checks a shell
 marker emitted only after Ctrl+C exits Codex. It sends no model prompt.

@@ -49,6 +49,12 @@ class ControlInputTests(unittest.TestCase):
             mirror.forward_key('surface-test', b'\x03')
         rpc.assert_called_once_with('terminal.input', {'surface_id': 'surface-test', 'text': '\x03'})
 
+    def test_other_ctrl_letters_use_the_same_byte_transport(self):
+        for value in (1, 4, 5, 6, 12, 14, 21, 26):
+            with self.subTest(value=value), patch.object(mirror, 'rpc', return_value={}) as rpc:
+                mirror.forward_key('surface-test', bytes([value]))
+            rpc.assert_called_once_with('terminal.input', {'surface_id': 'surface-test', 'text': chr(value)})
+
 
 class WindowTests(unittest.TestCase):
     lines = [f'line {i}' for i in range(100)]

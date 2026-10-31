@@ -355,10 +355,14 @@ else:
         self.visibility_thread.join(timeout=12)
         sample = self.mod.STATE / 'visibility.json'
         self.mod.atomic(sample, {'updated': time.time(), 'panes': [], 'activity': 0})
-        self.assertTrue(self.mod.health(self.data)['healthy'])
+        status = self.mod.health(self.data)
+        self.assertTrue(status['healthy'], status)
         pane = first['B'][2]['pane']
         self.tmux('respawn-pane', '-k', '-t', pane, 'true')
-        time.sleep(.2)
+        deadline = time.monotonic() + 8
+        while self.tmux('display-message', '-p', '-t', pane, '#{pane_dead}') != '1':
+            self.assertLess(time.monotonic(), deadline, 'test child did not exit')
+            time.sleep(.05)
         status = self.mod.health(self.data)
         self.assertFalse(status['healthy'])
         self.assertEqual(status['dead_mirrors'], 1)
@@ -368,6 +372,29 @@ else:
         self.assertFalse(self.mod.health(self.data)['healthy'])
         self.tmux('kill-window', '-t', first['C'][2]['window'])
         self.assertEqual(self.mod.health(self.data)['unmapped_surfaces'], 1)
+
+    def test_health_detects_wrong_index_and_wrong_group_without_mutating(self):
+        first = self.mod.sync(self.data)
+        self.visibility_stop.set()
+        self.visibility_thread.join(timeout=12)
+        self.mod.atomic(self.mod.STATE / 'visibility.json', {'updated': time.time(), 'panes': [], 'activity': 0})
+        b = first['B'][2]
+        self.tmux('move-window', '-d', '-s', b['window'], '-t', b['session']+':9')
+        status = self.mod.health(self.data)
+        self.assertFalse(status['healthy'], 'live mirrors at incorrect indexes are not synchronized')
+        self.assertEqual(status['misplaced_mirrors'], 1)
+        self.assertEqual(self.tmux('display-message', '-p', '-t', b['window'], '#{window_index}'), '9')
+        self.mod.sync(self.data)
+        self.tmux('set-option', '-t', b['session'], self.mod.OWNER, 'wrong-group')
+        self.assertFalse(self.mod.health(self.data)['healthy'])
+
+    def test_health_exposes_unbound_phone_windows_without_killing_busy_programs(self):
+        first = self.mod.sync(self.data)
+        session = first['A'][2]['session']
+        pane = self.tmux('new-window', '-d', '-P', '-F', '#{pane_id}', '-t', session+':', 'sleep 120')
+        status = self.mod.health(self.data)
+        self.assertEqual(status['unbound_phone_windows'], 1)
+        self.assertEqual(self.tmux('display-message', '-p', '-t', pane, '#{pane_dead}'), '0')
 
     def test_tab_in_title_never_duplicates_owned_windows(self):
         self.data['windows'][0]['workspaces'][0]['panes'][0]['surfaces'][0]['title'] = 'Title\twith tab'

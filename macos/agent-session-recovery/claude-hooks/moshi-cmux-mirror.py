@@ -479,15 +479,11 @@ def forward_key(surface_id: str, key: bytes) -> None:
     if name:
         send_key(surface_id, name)
         return
-    # Preserve Ctrl+C as the original input byte. Older cmux named-key
-    # injection loses it when Codex enables the Kitty keyboard protocol.
-    # Use terminal.input's byte-input lane rather than synthesizing a key.
-    if key == b"\x03":
-        rpc("terminal.input", {"surface_id": surface_id, "text": "\x03"})
-        return
-    # Ctrl letters
-    if len(key) == 1 and 1 <= key[0] <= 26 and key[0] not in (9, 10, 13):
-        send_key(surface_id, f"ctrl+{chr(key[0] + 96)}")
+    # Preserve control bytes, rather than synthesizing Ctrl-letter keys.
+    # Named-key injection can lose these under the Kitty keyboard protocol.
+    # Enter/Tab/Backspace were handled above and retain their key semantics.
+    if len(key) == 1 and 1 <= key[0] <= 26:
+        rpc("terminal.input", {"surface_id": surface_id, "text": key.decode("ascii")})
         return
     try:
         text = key.decode("utf-8")

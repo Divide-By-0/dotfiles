@@ -373,17 +373,29 @@ def watch_visibility(stop):
 
 
 def health(data):
-    surfaces = {s['id'] for group in groups(data) for s in group['surfaces']}
-    rows = [r for r in inventory() if r['group'] and r['surface'] in surfaces]
+    desired = groups(data)
+    expected = {s['id']: (group['key'], str(position))
+                for group in desired for position, s in enumerate(group['surfaces'])}
+    surfaces = set(expected)
+    all_rows = inventory()
+    rows = [r for r in all_rows if r['group'] and r['surface'] in surfaces]
+    # A live mirror is not necessarily synchronized. Check the topology too:
+    # missing indexes previously stalled sync while this status stayed green.
+    misplaced = sum((r['group'], r['index']) != expected[r['surface']] for r in rows)
+    group_keys = {g['key'] for g in desired}
+    # Busy phone windows are intentionally not adopted; expose them separately
+    # without marking preserved user programs as broken mirrors.
+    unbound = sum(r['group'] in group_keys and not r['surface'] for r in all_rows)
     dead = sum(r['dead'] == '1' for r in rows)
     missing = len(surfaces - {r['surface'] for r in rows})
     duplicates = len(rows) - len({r['surface'] for r in rows})
     sample = load(STATE / 'visibility.json')
     updated = sample.get('updated')
     age = time.time() - updated if isinstance(updated, (int, float)) and math.isfinite(updated) else None
-    return dict(healthy=not dead and not missing and not duplicates and age is not None and 0 <= age < 5,
+    return dict(healthy=not dead and not missing and not duplicates and not misplaced and age is not None and 0 <= age < 5,
                 runtime=sys.executable, terminal_surfaces=len(surfaces),
                 mirrors=len(rows), dead_mirrors=dead, unmapped_surfaces=missing, duplicate_mirrors=duplicates,
+                misplaced_mirrors=misplaced, unbound_phone_windows=unbound,
                 visibility_age_seconds=round(age, 2) if age is not None else None)
 
 
