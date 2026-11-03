@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import pty
 import select
+import shlex
 import signal
 import subprocess
 import struct
@@ -211,6 +212,67 @@ else:
         creates=[l for l in (self.path/'calls.jsonl').read_text().splitlines() if 'surface.create' in l]
         self.assertEqual(len(creates),1)
         self.assertEqual(len(self.tmux('list-windows','-t',session+':','-F','#{window_id}').split()),3)
+
+    def test_prefix_c_creates_in_origin_group_despite_other_default_session(self):
+        bindings = self.mod.sync(self.data)
+        origin = bindings['A'][2]
+        # Make another session the default for shell-spawned tmux commands.
+        other = self.tmux('new-session', '-d', '-P', '-F', '#{session_id}',
+                          '-s', 'recent-other', '/bin/sh')
+        cwd = self.path / 'real-cwd'
+        cwd.write_text('#!/bin/sh\nprintf /tmp\n')
+        cwd.chmod(0o755)
+        config = self.path / 'shortcut.conf'
+        line = next(line for line in (ROOT/'config/tmux-session-recovery.conf').read_text().splitlines()
+                    if line.startswith('bind c '))
+        config.write_text(line.replace('$HOME/.tmux/real-cwd.sh', str(cwd)) + '\n')
+        self.tmux('source-file', str(config))
+        command = shlex.split(line.replace('$HOME/.tmux/real-cwd.sh', str(cwd)))[-1]
+        old_origin = self.tmux('list-windows', '-t', origin['session'], '-F', '#{window_id}').split()
+        old_other = self.tmux('list-windows', '-t', other, '-F', '#{window_id}').split()
+        # The actual configured run-shell command with the originating key's
+        # pane context; mocks cover only cwd and cmux, not tmux routing.
+        self.tmux('run-shell', '-t', origin['pane'], command)
+        now_origin = self.tmux('list-windows', '-t', origin['session'], '-F', '#{window_id}').split()
+        now_other = self.tmux('list-windows', '-t', other, '-F', '#{window_id}').split()
+        self.assertEqual(len(now_origin), len(old_origin)+1, 'prefix+c created outside the originating session')
+        self.assertEqual(now_other, old_other, 'prefix+c changed another session')
+        created = next(w for w in now_origin if w not in old_origin)
+        self.assertEqual(self.tmux('display-message', '-p', '-t', origin['session'], '#{window_id}'), created)
+        deadline = time.monotonic()+5
+        while True:
+            adopted = self.mod.sync(self.data)
+            new = [v[2] for sid,v in adopted.items() if sid.startswith('NEW')]
+            if new:
+                break
+            self.assertLess(time.monotonic(), deadline, 'new shell never adopted')
+            time.sleep(.05)
+        self.assertEqual(new[0]['window'], created)
+        self.assertEqual(self.tmux('display-message', '-p', '-t', origin['session'], '#{window_id}'), created)
+        self.data = json.loads((self.path/'tree.json').read_text())
+        self.mod.sync(self.data)
+        self.assertEqual(self.tmux('display-message', '-p', '-t', origin['session'], '#{window_id}'), created)
+
+    def test_split_shortcuts_keep_origin_pane_with_another_default_session(self):
+        bindings = self.mod.sync(self.data)
+        origin = bindings['A'][2]
+        other = self.tmux('new-session', '-d', '-P', '-F', '#{session_id}',
+                          '-s', 'split-other', '/bin/sh')
+        cwd = self.path / 'real-cwd'
+        cwd.write_text('#!/bin/sh\nprintf /tmp\n')
+        cwd.chmod(0o755)
+        lines = (ROOT/'config/tmux-session-recovery.conf').read_text().splitlines()
+        for key in ('%', '"'):
+            with self.subTest(key=key):
+                line = next(line for line in lines if line.startswith('bind ') and shlex.split(line)[1] == key)
+                command = shlex.split(line.replace('$HOME/.tmux/real-cwd.sh', str(cwd)))[-1]
+                old_origin = self.tmux('list-panes', '-t', origin['window'], '-F', '#{pane_id}').split()
+                old_other = self.tmux('list-panes', '-t', other, '-F', '#{pane_id}').split()
+                self.tmux('run-shell', '-t', origin['pane'], command)
+                now_origin = self.tmux('list-panes', '-t', origin['window'], '-F', '#{pane_id}').split()
+                self.assertEqual(len(now_origin), len(old_origin)+1)
+                self.assertEqual(self.tmux('list-panes', '-t', other, '-F', '#{pane_id}').split(), old_other)
+                self.tmux('kill-pane', '-t', next(p for p in now_origin if p not in old_origin))
 
     def test_busy_phone_window_is_never_adopted_or_killed(self):
         """2026-09-26: a Claude started in a phone-made tab was killed by adoption.
