@@ -366,11 +366,11 @@ def watch_visibility(stop):
             clients = tmux('list-clients', '-F', '#{pane_id} #{client_activity}', check=False)
             rows = [line.split() for line in clients.stdout.splitlines() if line.strip()]
             panes = [r[0] for r in rows]
-            selected = tuple(sorted(panes))
+            selected = frozenset(panes)
             # API-driven window selection need not update client_activity.
             # Treat a changed selection as viewing activity, but do not wake
             # stale background clients merely because this watcher restarted.
-            if previous_panes is not None and selected != previous_panes:
+            if previous_panes is not None and selected - previous_panes:
                 selection_activity = time.time()
             previous_panes = selected
             activity = max(selection_activity, max(

@@ -80,7 +80,7 @@ class SelectionWakeTests(unittest.TestCase):
                 self.intervals.append(interval)
                 self.rounds += 1
         stop = Stop()
-        responses = [subprocess.CompletedProcess([], 0, pane+' 400\n', '') for pane in panes]
+        responses = [subprocess.CompletedProcess([], 0, ''.join(p+' 400\n' for p in (pane if isinstance(pane, list) else [pane])), '') for pane in panes]
         with tempfile.TemporaryDirectory() as tmp, patch.object(mod, 'STATE', Path(tmp)), patch.object(
                 mod, 'tmux', side_effect=responses), patch.object(mod.time, 'time', return_value=1000), patch.object(
                 mod, 'atomic', wraps=mod.atomic) as writes:
@@ -92,6 +92,11 @@ class SelectionWakeTests(unittest.TestCase):
         self.assertEqual(samples[0]['activity'], 400, 'watcher restart must not wake idle phones')
         self.assertEqual(samples[1]['activity'], 1000, 'tab selection should count as activity')
         self.assertEqual(intervals, [1.0, .25])
+
+    def test_detaching_a_client_does_not_wake_remaining_idle_clients(self):
+        samples, intervals = self.sample([['%1', '%2'], ['%1']])
+        self.assertEqual([s['activity'] for s in samples], [400, 400])
+        self.assertEqual(intervals, [1.0, 1.0])
 
     def test_unchanged_background_client_stays_idle(self):
         samples, intervals = self.sample(['%1', '%1'])
