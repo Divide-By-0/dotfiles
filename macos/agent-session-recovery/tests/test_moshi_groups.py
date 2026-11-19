@@ -69,6 +69,36 @@ class VisibilityTests(unittest.TestCase):
             calls.assert_called_once()
 
 
+class SelectionWakeTests(unittest.TestCase):
+    def sample(self, panes):
+        mod = load('moshi-cmux-groups')
+        class Stop:
+            rounds = 0
+            intervals = []
+            def is_set(self): return self.rounds >= len(panes)
+            def wait(self, interval):
+                self.intervals.append(interval)
+                self.rounds += 1
+        stop = Stop()
+        responses = [subprocess.CompletedProcess([], 0, pane+' 400\n', '') for pane in panes]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(mod, 'STATE', Path(tmp)), patch.object(
+                mod, 'tmux', side_effect=responses), patch.object(mod.time, 'time', return_value=1000), patch.object(
+                mod, 'atomic', wraps=mod.atomic) as writes:
+            mod.watch_visibility(stop)
+            return [c.args[1] for c in writes.call_args_list], stop.intervals
+
+    def test_changing_visible_tab_wakes_without_a_new_keystroke(self):
+        samples, intervals = self.sample(['%1', '%2'])
+        self.assertEqual(samples[0]['activity'], 400, 'watcher restart must not wake idle phones')
+        self.assertEqual(samples[1]['activity'], 1000, 'tab selection should count as activity')
+        self.assertEqual(intervals, [1.0, .25])
+
+    def test_unchanged_background_client_stays_idle(self):
+        samples, intervals = self.sample(['%1', '%1'])
+        self.assertEqual([s['activity'] for s in samples], [400, 400])
+        self.assertEqual(intervals, [1.0, 1.0])
+
+
 class GroupTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="mg-", dir="/tmp")

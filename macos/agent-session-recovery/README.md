@@ -263,6 +263,20 @@ Full Disk Access → add the real versioned binary (`readlink -f
 `brew upgrade tmux`. `python3 tests/live_launchd_documents.py` checks both
 parts; `--skip-grant` checks only the installer's part.
 
+## Mobile tab activation
+
+Changing the selected tmux pane counts as viewing activity even when the client
+has not typed recently. tmux's `client_activity` can stay unchanged after an
+API-driven window selection; using only that timestamp left a newly selected
+mobile tab asleep. A watcher restart alone does not wake unchanged background
+clients.
+
+The mirror batches adjacent text from each input read into one RPC. Forwarding
+a buffered prompt one byte at a time used to block the first frame behind many
+subprocess/RPC calls. Control keys and mouse/terminal sequences remain ordered
+and separate. The shared visibility sampler still polls slowly when inactive;
+its detection interval and cmux/network latency can add to activation time.
+
 ## Scrolling a mirror from the phone
 
 Mirror panes draw on the alternate screen, so tmux copy-mode has no history

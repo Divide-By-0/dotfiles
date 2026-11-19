@@ -211,6 +211,44 @@ class LifecycleRun:
         return self
 
 
+class WakeTrace(LoopTrace):
+    def user_call(self, frame, argument_list):
+        if frame.f_code.co_name in {'forward_key', 'replay_viewport'}:
+            self.observations.append((frame.f_code.co_name, frame.f_globals['time'].monotonic()))
+
+
+class TypedWakeRun(LifecycleRun):
+    def __init__(self):
+        super().__init__(scroll=False, detach=100, stop=3)
+        self.sent = False
+        self.first_paint = None
+        self.input_calls = 0
+        self.trace = WakeTrace()
+
+    def select(self, *_):
+        return ([0] if not self.sent else [], [], [])
+
+    def read(self, *_):
+        self.sent = True
+        return b'abcdefghijklmnopqrst'
+
+    def rpc(self, method, params):
+        if method == 'surface.send_text':
+            self.input_calls += 1
+            self.now += .1  # measured CLI/RPC boundary, one delay per call
+            return {}
+        if method == 'terminal.replay' and self.first_paint is None:
+            self.first_paint = self.now
+        return super().rpc(method, params)
+
+
+class WakeLatencyTests(unittest.TestCase):
+    def test_buffered_typing_does_not_delay_first_paint_by_character_count(self):
+        run = TypedWakeRun().run()
+        self.assertLessEqual(run.first_paint, .2, '20 buffered characters delayed the first frame; debugger=' + repr(run.trace.observations))
+        self.assertEqual(run.input_calls, 1, 'one text run should use one RPC')
+
+
 class MainLoopTests(unittest.TestCase):
     def test_reading_scrollback_keeps_phone_geometry_until_detach(self):
         run = LifecycleRun().run()

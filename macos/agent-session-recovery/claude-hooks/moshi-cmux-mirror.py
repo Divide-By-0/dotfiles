@@ -405,6 +405,28 @@ def read_keys(buf: bytearray) -> list[bytes]:
     return keys
 
 
+def coalesce_text_keys(keys: list[bytes]) -> list[bytes]:
+    """Send contiguous text from one read as one RPC, retaining key boundaries.
+
+    A phone can buffer typing while a tab wakes. One subprocess/RPC per byte
+    blocks the first frame for seconds and splits UTF-8 text into invalid bytes.
+    Control keys and terminal/mouse sequences must stay separate and ordered.
+    """
+    result: list[bytes] = []
+    text = bytearray()
+    for key in keys:
+        if key and key[0] >= 0x20 and key[0] != 0x7f:
+            text.extend(key)
+            continue
+        if text:
+            result.append(bytes(text))
+            text.clear()
+        result.append(key)
+    if text:
+        result.append(bytes(text))
+    return result
+
+
 def mouse_event(key: bytes) -> str | None:
     """'up'/'down' for wheel reports, 'other' for any other mouse report."""
     if key.startswith(b"\x1b[M") and len(key) == 6:
@@ -812,7 +834,7 @@ def main() -> int:
                     stop = True
                     break
                 key_buf.extend(chunk)
-                for key in read_keys(key_buf):
+                for key in coalesce_text_keys(read_keys(key_buf)):
                     event = mouse_event(key)
                     if event == "up":
                         scroll_offset += SCROLL_STEP

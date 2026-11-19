@@ -358,13 +358,24 @@ def sync(data):
 
 def watch_visibility(stop):
     """One sampler, independent of slow topology RPCs and the sync lock."""
+    previous_panes = None
+    selection_activity = 0
     while not stop.is_set():
         interval = 1.0
         try:
             clients = tmux('list-clients', '-F', '#{pane_id} #{client_activity}', check=False)
             rows = [line.split() for line in clients.stdout.splitlines() if line.strip()]
-            activity = max((int(r[1]) for r in rows if len(r) > 1 and r[1].isdigit()), default=0)
-            atomic(STATE / 'visibility.json', {'updated': time.time(), 'panes': [r[0] for r in rows], 'activity': activity})
+            panes = [r[0] for r in rows]
+            selected = tuple(sorted(panes))
+            # API-driven window selection need not update client_activity.
+            # Treat a changed selection as viewing activity, but do not wake
+            # stale background clients merely because this watcher restarted.
+            if previous_panes is not None and selected != previous_panes:
+                selection_activity = time.time()
+            previous_panes = selected
+            activity = max(selection_activity, max(
+                (int(r[1]) for r in rows if len(r) > 1 and r[1].isdigit()), default=0))
+            atomic(STATE / 'visibility.json', {'updated': time.time(), 'panes': panes, 'activity': activity})
             if rows and time.time() - activity < 300:
                 interval = .25
         except (OSError, subprocess.SubprocessError):

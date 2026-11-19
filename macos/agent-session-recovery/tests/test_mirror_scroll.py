@@ -43,6 +43,17 @@ class ParseTests(unittest.TestCase):
                          [b'\x1b[5~', b'\x1bOA', b'\x1b[1;5C', b'\x1b'])
 
 
+class TextBatchTests(unittest.TestCase):
+    def test_text_is_batched_without_merging_control_or_mouse_events(self):
+        data = b'hello\x03world\x1b[<64;5;5Mabc\r'
+        self.assertEqual(mirror.coalesce_text_keys(mirror.read_keys(bytearray(data))),
+                         [b'hello', b'\x03', b'world', b'\x1b[<64;5;5M', b'abc', b'\r'])
+
+    def test_utf8_text_in_one_read_is_not_split_into_invalid_bytes(self):
+        data = 'café'.encode('utf-8')
+        self.assertEqual(mirror.coalesce_text_keys(mirror.read_keys(bytearray(data))), [data])
+
+
 class ControlInputTests(unittest.TestCase):
     def test_ctrl_c_preserves_original_byte_for_kitty_applications(self):
         with patch.object(mirror, 'rpc', return_value={}) as rpc:
