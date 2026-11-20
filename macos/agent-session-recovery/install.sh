@@ -47,7 +47,7 @@ backup_and_install() {
 
 backup_and_install "$ROOT/bin/wait-for-pty-capacity.sh" "$HOME/.local/bin/wait-for-pty-capacity.sh"
 
-for name in cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh tmux-periodic-resurrect-save.sh agent-session-doctor; do
+for name in cmux moshi-cmux tmux-autostart-restore.sh tmux-daily-resurrect-save.sh tmux-periodic-resurrect-save.sh agent-session-doctor; do
   backup_and_install "$ROOT/bin/$name" "$HOME/.local/bin/$name"
 done
 
@@ -134,6 +134,7 @@ render_plist() {
 
 ensure_tmux_source
 ensure_zsh_source
+python3 "$ROOT/install-claude-titles.py"
 mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 render_plist "$ROOT/launchagents/com.aayush.tmux-autostart.plist.in" "$HOME/Library/LaunchAgents/com.aayush.tmux-autostart.plist"
 render_plist "$ROOT/launchagents/com.aayush.tmux-daily-resurrect-save.plist.in" "$HOME/Library/LaunchAgents/com.aayush.tmux-daily-resurrect-save.plist"

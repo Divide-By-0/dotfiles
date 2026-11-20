@@ -20,6 +20,7 @@ import uuid
 ROOT=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--workspace',required=True)
+parser.add_argument('--codex-interrupt', action='store_true', help='Start an idle Codex TUI and verify two Ctrl+C presses exit it; sends no model prompt')
 args=parser.parse_args()
 real='/opt/homebrew/bin/cmux'
 data=json.loads(subprocess.check_output([real,'rpc','system.tree','{}']))
@@ -36,7 +37,8 @@ ids=[s['id'] for s in surfaces]
 socket='moshi-live-'+uuid.uuid4().hex
 client=None
 master=None
-with tempfile.TemporaryDirectory(prefix='moshi-live-') as tmp:
+watcher=None
+with tempfile.TemporaryDirectory(prefix='ml-', dir='/tmp') as tmp:
     path=Path(tmp)
     wrapper=path/'cmux'
     wrapper.write_text('''#!/usr/bin/env python3
@@ -47,16 +49,22 @@ if method=='system.tree':
 else:
  params=json.loads(sys.argv[3])
  assert params['surface_id'] in IDS
- assert method in {'terminal.replay','terminal.viewport','surface.send_key','surface.send_text'}
+ assert method in {'terminal.replay','terminal.viewport','surface.send_key','surface.send_text','terminal.input'}
  subprocess.run([REAL,*sys.argv[1:]],check=True)
 '''.replace('TREE',repr(json.dumps({'windows':windows}))).replace('IDS',repr(ids)).replace('REAL',repr(real)))
     wrapper.chmod(0o755)
     env=os.environ.copy()
-    env.update(TMUX_SOCKET=socket,CMUX_BIN=str(wrapper),MOSHI_GROUP_STATE_DIR=str(path/'state'),MOSHI_LOG_PATH=str(path/'mirror.log'),TERM='xterm-256color')
+    env.update(TMUX_TMPDIR=str(path),TMUX_SOCKET=socket,CMUX_BIN=str(wrapper),MOSHI_GROUP_STATE_DIR=str(path/'state'),MOSHI_LOG_PATH=str(path/'mirror.log'),TERM='xterm-256color')
+    env.update(MOSHI_CMUX_LAUNCHER=str(ROOT/'bin/moshi-cmux'),MOSHI_CMUX_ROOT=str(ROOT/'claude-hooks'))
     def tmux(*a): return subprocess.check_output(['tmux','-L',socket,*a],text=True,env=env).strip()
     try:
         tmux('-f','/dev/null','new-session','-d','-s','test-anchor','sleep 120')
         result=subprocess.run([sys.executable,str(ROOT/'claude-hooks/moshi-cmux-groups.py')],env=env,text=True,capture_output=True,check=True)
+        # Grouped mirrors intentionally stay idle without the shared sampler.
+        # Exercise the production watcher instead of expecting one-shot sync
+        # alone to enable input/replay (that behavior changed in the idle fix).
+        watcher=subprocess.Popen([sys.executable,str(ROOT/'claude-hooks/moshi-cmux-groups.py'),'--watch'],
+                                 env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         states=[json.loads(p.read_text()) for p in (path/'state').glob('*.json')]
         states.sort(key=lambda x:ids.index(x['surface_id']))
         a,b=states
@@ -82,13 +90,28 @@ else:
         time.sleep(2)
         os.write(master,b"printf 'MOSHI_REAL_TAB_A_OK\\n'\r")
         wait(lambda:'MOSHI_REAL_TAB_A_OK' in tmux('capture-pane','-p','-t',a['tmux_pane']))
+        if args.codex_interrupt:
+            # The shell prints the marker *after* Codex exits. Never type a
+            # follow-up command that a still-running Codex could treat as a prompt.
+            subprocess.check_output([real, 'rpc', 'surface.send_text', json.dumps({
+                'surface_id': ids[0], 'text': "~/.local/bin/codex --no-alt-screen; printf '\\115OSHI_CODEX_EXITED\\n'\n"})])
+            wait(lambda: 'OpenAI Codex' in tmux('capture-pane', '-p', '-t', a['tmux_pane']))
+            # The banner can precede Codex's input initialization; early keys
+            # are flushed during its raw-mode setup. Wait for startup to settle.
+            time.sleep(8)
+            os.write(master, b'\x03')
+            time.sleep(.75)
+            os.write(master, b'\x03')
+            wait(lambda: 'MOSHI_CODEX_EXITED' in tmux('capture-pane', '-p', '-t', a['tmux_pane']))
         # Actual Moshi context resolves the grouped tmux window/pane.
         context_env=env.copy()
         context_env['TMUX']=tmux('display-message','-p','-t',a['tmux_pane'],'#{socket_path},#{pid},#{session_id}')
         context_env['TMUX_PANE']=a['tmux_pane']
         context=json.loads(subprocess.check_output(['/opt/homebrew/bin/moshi','context'],env=context_env,text=True))
-        print(json.dumps({'result':'PASS','tabs':2,'prefix_next_previous':True,'input_and_replay':True,'moshi_context':context}))
+        print(json.dumps({'result':'PASS','tabs':2,'prefix_next_previous':True,'input_and_replay':True,'codex_interrupt':args.codex_interrupt,'moshi_context':context}))
     finally:
-        subprocess.run(['tmux','-L',socket,'kill-server'],capture_output=True)
+        if watcher:
+            watcher.terminate();watcher.wait(timeout=12)
+        subprocess.run(['tmux','-L',socket,'kill-server'],capture_output=True,env=env)
         if client: client.kill();client.wait()
         if master is not None: os.close(master)
