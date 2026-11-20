@@ -54,6 +54,8 @@ KEY_MAP = {
     b"\t": "tab",
     b"\r": "enter",
     b"\n": "enter",
+    b"\x1b[13;2u": "shift+enter",  # CSI u
+    b"\x1b[27;2;13~": "shift+enter",  # xterm modifyOtherKeys
 }
 
 

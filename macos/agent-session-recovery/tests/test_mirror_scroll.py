@@ -55,6 +55,18 @@ class TextBatchTests(unittest.TestCase):
 
 
 class ControlInputTests(unittest.TestCase):
+    def test_shift_enter_stays_between_the_two_draft_lines(self):
+        for encoded_key in (b'\x1b[13;2u', b'\x1b[27;2;13~'):
+            with self.subTest(encoded_key=encoded_key), patch.object(mirror, 'rpc') as rpc:
+                keys = mirror.read_keys(bytearray(b'first' + encoded_key + b'second'))
+                for key in mirror.coalesce_text_keys(keys):
+                    mirror.forward_key('surface-test', key)
+                self.assertEqual([call.args for call in rpc.call_args_list], [
+                    ('surface.send_text', {'surface_id': 'surface-test', 'text': 'first'}),
+                    ('surface.send_key', {'surface_id': 'surface-test', 'key': 'shift+enter'}),
+                    ('surface.send_text', {'surface_id': 'surface-test', 'text': 'second'}),
+                ])
+
     def test_ctrl_c_preserves_original_byte_for_kitty_applications(self):
         with patch.object(mirror, 'rpc', return_value={}) as rpc:
             mirror.forward_key('surface-test', b'\x03')
