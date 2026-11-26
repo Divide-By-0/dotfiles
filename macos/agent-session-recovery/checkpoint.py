@@ -69,7 +69,7 @@ def provider_for(executable):
 def argv_identity(provider, words):
     # Use kernel argv boundaries: a prompt containing "resume <uuid>" is not
     # a native resume command. ps's human-readable args cannot prove this.
-    flags = {"--resume", "--session-id"} if provider == "claude" else {"resume"}
+    flags = {"--resume", "--session-id", "-r"} if provider == "claude" else {"resume"}
     ids = set()
     for index, word in enumerate(words):
         if word in flags and index + 1 < len(words) and UUID.fullmatch(words[index + 1]):
@@ -217,8 +217,10 @@ def inventory(home, snapshot, tree, processes, hooks):
                          and abs(h["pidStartSeconds"] - process["started"]) <= 1.1
                          and UUID.fullmatch(h.get("sessionId", ""))]
         hooked = {h["sessionId"].lower() for h in matched_hooks}
-        ids = direct or hooked
-        # A concrete resume argv beats an obsolete hook on that same process.
+        # /clear or switching tasks can replace the initial resume identity
+        # without replacing the process. Conflicting live evidence is a gap,
+        # never a reason to quietly archive the initial conversation instead.
+        ids = direct | hooked
         for sid in ids:
             observed.add((provider, sid))
         route_ids = {h.get("surfaceId", "").lower() for h in matched_hooks}
@@ -239,7 +241,8 @@ def inventory(home, snapshot, tree, processes, hooks):
                      workspace_id=surface.get("workspace_id"), surface_ref=surface.get("ref"),
                      surface_id=surface.get("id"), tty=process["tty"], provider=provider, pid=process["pid"])
         if len(matches) != 1 or len(ids) != 1:
-            unknown.append(dict(label, reason="ambiguous identity" if ids else "native session ID not captured"))
+            unknown.append(dict(label, reason="ambiguous identity" if ids else "native session ID not captured",
+                                native_session_ids=sorted(ids)))
             continue
         sid = next(iter(ids))
         hook = next((h for h in matched_hooks if h["sessionId"].lower() == sid), {})

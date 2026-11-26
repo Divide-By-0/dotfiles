@@ -102,6 +102,13 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(cp.argv_identity("codex", ["codex", "please resume " + SID]), set())
         self.assertEqual(cp.argv_identity("claude", ["claude", "explain --resume " + SID]), set())
 
+    def test_clear_or_switch_does_not_keep_initial_resume_identity_silently(self):
+        hook = dict(pid=42, pidStartSeconds=100, sessionId=OTHER, surfaceId=SURFACE)
+        data, _ = cp.inventory(self.home, self.snapshot, self.tree, {42: self.process}, {"codex": [hook]})
+        self.assertEqual(data["sessions"], [])
+        self.assertEqual(data["unknown"][0]["native_session_ids"], [SID, OTHER])
+        self.assertEqual(cp.argv_identity("claude", ["claude", "-r", SID]), {SID})
+
     def test_kernel_argument_reader_round_trips_real_process_without_environment(self):
         argv, surface = cp.native_arguments(os.getpid())
         self.assertTrue(argv)
