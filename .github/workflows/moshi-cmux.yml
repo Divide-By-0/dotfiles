@@ -27,3 +27,4 @@ jobs:
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_launch.py -v
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_moshi_example.py -v
       - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_claude_titles.py -v
+      - run: PYTHONDONTWRITEBYTECODE=1 python3 macos/agent-session-recovery/tests/test_cmux_checkpoints.py -v

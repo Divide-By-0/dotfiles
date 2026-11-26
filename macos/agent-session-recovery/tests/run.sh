@@ -20,7 +20,7 @@ trap cleanup EXIT
 for file in "$ROOT"/bin/*.sh "$ROOT"/tmux/*.sh "$ROOT"/claude-hooks/*.sh "$ROOT/install.sh" "$ROOT/install-pty-capacity.sh"; do
   bash -n "$file"
 done
-for file in "$ROOT/bin/cmux" "$ROOT/claude-hooks/moshi-claude-hook.sh" "$ROOT/claude-hooks/moshi-ghost-keeper.sh"; do
+for file in "$ROOT/bin/cmux" "$ROOT/bin/cmux-checkpoint" "$ROOT/claude-hooks/moshi-claude-hook.sh" "$ROOT/claude-hooks/moshi-ghost-keeper.sh"; do
   sh -n "$file"
 done
 zsh -n "$ROOT/config/zsh-session-recovery.zsh"
@@ -237,6 +237,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_pty_capacity.py" -v
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_moshi_launch.py" -v
 
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_install_outside_documents.py" -v
+
+PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_cmux_checkpoints.py" -v
 
 PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/tests/test_claude_titles.py" -v
 

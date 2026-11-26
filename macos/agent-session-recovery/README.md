@@ -33,6 +33,81 @@ without a restart. The hook reads only title records locally, caches transcript
 offsets, and makes no model calls. It also labels standalone Claude terminals;
 headless invocations have no eligible terminal and remain silent.
 
+## cmux checkpoints independent of automatic resume
+
+cmux's layout autosave and automatic agent launch are separate. A disabled or
+missing binding must not erase the identity of a conversation that was running.
+Install the independent checkpoint job without reloading tmux, Moshi, or cmux:
+
+```sh
+python3 macos/agent-session-recovery/install-cmux-checkpoints.py
+cmux-checkpoint status
+cmux-checkpoint list
+```
+
+Every **120 seconds**, and at login, this read-only job archives the saved cmux
+layout and inventories local Claude/Codex conversations using native UUIDs from
+their process arguments or hook records corroborated by PID and process start
+time. Stable surface IDs handle moved tabs and nested secretty PTYs. It does not
+depend on `autoResume`, change that setting, restart an agent, or send prompts.
+An old checkpoint belonging to an exited agent remains available but is excluded
+from bulk recovery. Unknown/ambiguous identities are reported, with a bounded
+screen excerpt saved privately for diagnosis; titles/cwd/newest-history guesses
+never choose a conversation.
+
+State is private under `~/.local/state/cmux-checkpoints/` (directories 0700, files
+0600). Keep checkpoints at full resolution for 12 hours, hourly for 7 days, and
+daily for 30 days, within 256 MiB. Logs rotate at 1 MiB. Atomic writes, a shared
+lock, and a separate error record preserve the last successful checkpoint when
+cmux is stopped or its API fails. `status` reports checkpoint age, unknown IDs,
+missing histories, and a newer capture error. Runtime files are installed as
+copies outside Documents; the launcher rediscovers a working Python after updates.
+
+After a failed reopen:
+
+```sh
+cmux-checkpoint recover          # preview: does not launch anything
+cmux-checkpoint recover --apply  # open missing conversations in a new recovery workspace
+```
+
+Recovery defaults to the latest checkpoint from the previous cmux process run,
+so a partial reopening does not replace the recovery set. Choose a different
+checkpoint with `--checkpoint NAME` from `list`. Already running conversations
+are skipped globally, and a fresh check before every launch prevents a race
+with manual restoration. A ten-minute pending-launch reservation prevents
+duplicate retries after a slow launch or lost response. Existing tabs, drafts,
+shells and agent processes are never overwritten. To explicitly recover an old,
+exited checkpoint, select its exact ID with `--session UUID`.
+
+Only native resume commands are constructed. Arbitrary stored startup commands,
+temporary settings files, and snapshot environment variables are not executed.
+Codex uses `--no-daemon` and its saved cwd rather than changing a shared daemon.
+Existing explicit permission-bypass mode is retained only for verified live
+records; exited/manual records use provider defaults. `launch-requested` means
+the terminal was created, not that provider authentication or full conversation
+loading has succeeded. A missing native history or directory is reported and
+never silently replaced by another conversation.
+
+If the layout itself is lost, export an archived copy without modifying the app:
+
+```sh
+cmux-checkpoint export-layout --checkpoint NAME --output "$HOME/cmux-recovery.json"
+# Inspect it first. This separate command asks cmux to import the saved layout:
+cmux restore-session --from "$HOME/cmux-recovery.json"
+```
+
+Exports verify the archived checksum and refuse to overwrite existing files.
+cmux's own trust rules apply to imported startup commands. These checkpoints
+preserve layout and native conversation identities, **not process memory or a
+second copy of provider transcripts**; Claude/Codex histories and ordinary disk
+backups remain necessary. This is a recovery fallback, not proof that every
+conversation will automatically relaunch after a future update.
+
+```sh
+launchctl print "gui/$(id -u)/com.aayushgupta.cmux-checkpoints"
+python3 macos/agent-session-recovery/tests/test_cmux_checkpoints.py -v
+```
+
 ## Generated tmux names
 
 The Moshi watcher, cmux Claude hook and tmux new-window hook all use the
