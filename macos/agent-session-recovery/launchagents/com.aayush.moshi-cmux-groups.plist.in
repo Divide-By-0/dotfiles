@@ -4,8 +4,7 @@
   <key>Label</key><string>com.aayush.moshi-cmux-groups</string>
   <key>ProgramArguments</key><array>
     <string>__HOME__/.local/bin/wait-for-pty-capacity.sh</string>
-    <string>/opt/homebrew/bin/python3</string>
-    <string>__HOME__/.claude/hooks/moshi-cmux-groups.py</string>
+    <string>__HOME__/.local/bin/moshi-cmux</string>
     <string>--watch</string>
   </array>
   <key>RunAtLoad</key><true/>

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Runtime copies live outside Documents so launchd never waits on its TCC grant.
+set -eu
+script="${CMUX_CHECKPOINT_SCRIPT:-$HOME/.local/lib/cmux-checkpoint/checkpoint.py}"
+for runtime in /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+  [ -x "$runtime" ] || continue
+  if "$runtime" -I -c 'import sys; sys.exit(sys.version_info < (3, 9))' >/dev/null 2>&1; then
+    exec "$runtime" -I "$script" "$@"
+  fi
+done
+echo 'cmux-checkpoint: Python 3.9+ is unavailable' >&2
+exit 78

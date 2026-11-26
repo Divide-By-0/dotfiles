@@ -15,7 +15,118 @@ Why copies: this checkout lives under `~/Documents`, which macOS TCC gates per r
 - Claude startup trust and large-session summary prompts are accepted only in panes being relaunched from an already saved checkpoint.
 - Plain login-shell rows remain outside the auto-restore allowlist. Their visible `Previous command (not auto-restored)` annotation is intentional: it preserves evidence when a pre-reboot agent was accidentally saved as its outer login shell instead of silently treating that pane as successfully recovered.
 
+## Claude terminal titles
+
+Claude can generate a title such as `Codex task 01a128ab airtable submission`
+from a prompt asking it to resume a Codex task. That describes its input, but
+makes the running provider unclear. The installed lifecycle hook displays
+`Airtable submission — Claude`, while preserving explicit Claude `/rename`
+titles. Manual cmux tab names still take precedence over OSC terminal titles.
+
+`install-claude-titles.py` installs just this hook and merges it into existing
+Claude settings, with backups. It disables Claude's competing native terminal
+title generation; new sessions use the first human prompt as a local label,
+while resumed sessions retain their saved title. The hook writes to its own
+terminal (the exact inherited surface for detached cmux hooks), never to hook
+stdout. New Claude processes use this behavior. Existing sessions can finish
+without a restart. The hook reads only title records locally, caches transcript
+offsets, and makes no model calls. It also labels standalone Claude terminals;
+headless invocations have no eligible terminal and remain silent.
+
+## cmux checkpoints independent of automatic resume
+
+cmux's layout autosave and automatic agent launch are separate. A disabled or
+missing binding must not erase the identity of a conversation that was running.
+Install the independent checkpoint job without reloading tmux, Moshi, or cmux:
+
+```sh
+python3 macos/agent-session-recovery/install-cmux-checkpoints.py
+cmux-checkpoint status
+cmux-checkpoint list
+```
+
+Every **120 seconds**, and at login, this read-only job archives the saved cmux
+layout and inventories local Claude/Codex conversations using native UUIDs from
+their process arguments or hook records corroborated by PID and process start
+time. Stable surface IDs handle moved tabs and nested secretty PTYs. It does not
+depend on `autoResume`, change that setting, restart an agent, or send prompts.
+An old checkpoint belonging to an exited agent remains available but is excluded
+from bulk recovery. Unknown/ambiguous identities are reported, with a bounded
+screen excerpt saved privately for diagnosis; titles/cwd/newest-history guesses
+never choose a conversation.
+
+State is private under `~/.local/state/cmux-checkpoints/` (directories 0700, files
+0600). Keep checkpoints at full resolution for 12 hours, hourly for 7 days, and
+daily for 30 days, within 256 MiB. Logs rotate at 1 MiB. Atomic writes, a shared
+lock, and a separate error record preserve the last successful checkpoint when
+cmux is stopped or its API fails. `status` reports checkpoint age, unknown IDs,
+missing histories, and a newer capture error. Runtime files are installed as
+copies outside Documents; the launcher rediscovers a working Python after updates.
+
+After a failed reopen:
+
+```sh
+cmux-checkpoint recover          # preview: does not launch anything
+cmux-checkpoint recover --apply  # open missing conversations in a new recovery workspace
+```
+
+Recovery defaults to the latest checkpoint from the previous cmux process run,
+so a partial reopening does not replace the recovery set. Choose a different
+checkpoint with `--checkpoint NAME` from `list`. Already running conversations
+are skipped globally, and a fresh check before every launch prevents a race
+with manual restoration. A ten-minute pending-launch reservation prevents
+duplicate retries after a slow launch or lost response. Existing tabs, drafts,
+shells and agent processes are never overwritten. To explicitly recover an old,
+exited checkpoint, select its exact ID with `--session UUID`.
+
+Only native resume commands are constructed. Arbitrary stored startup commands,
+temporary settings files, and snapshot environment variables are not executed.
+Codex uses `--no-daemon` and its saved cwd rather than changing a shared daemon.
+Existing explicit permission-bypass mode is retained only for verified live
+records; exited/manual records use provider defaults. `launch-requested` means
+the terminal was created, not that provider authentication or full conversation
+loading has succeeded. A missing native history or directory is reported and
+never silently replaced by another conversation.
+
+If the layout itself is lost, export an archived copy without modifying the app:
+
+```sh
+cmux-checkpoint export-layout --checkpoint NAME --output "$HOME/cmux-recovery.json"
+# Inspect it first. This separate command asks cmux to import the saved layout:
+cmux restore-session --from "$HOME/cmux-recovery.json"
+```
+
+Exports verify the archived checksum and refuse to overwrite existing files.
+cmux's own trust rules apply to imported startup commands. These checkpoints
+preserve layout and native conversation identities, **not process memory or a
+second copy of provider transcripts**; Claude/Codex histories and ordinary disk
+backups remain necessary. This is a recovery fallback, not proof that every
+conversation will automatically relaunch after a future update.
+
+```sh
+launchctl print "gui/$(id -u)/com.aayushgupta.cmux-checkpoints"
+python3 macos/agent-session-recovery/tests/test_cmux_checkpoints.py -v
+```
+
 ## Generated tmux names
+
+The Moshi watcher, cmux Claude hook and tmux new-window hook all use the
+installed `~/.local/bin/moshi-cmux` launcher. It runs the stdlib-only bridge
+with macOS Python, rediscovering compatible versioned Homebrew runtimes if
+necessary. Isolated Python mode excludes the caller's Conda/pyenv settings,
+`PYTHONHOME`, `PYTHONPATH` and user packages. Mirrors also restart through this
+launcher rather than a saved interpreter path. The watcher respawns dead owned mirrors on
+its next reconciliation while preserving their pane IDs and unrelated agents.
+`moshi-cmux --dry-run` checks cmux connectivity without changing any panes.
+The LaunchAgent retains the PTY-capacity gate before starting the watcher.
+`moshi-cmux --status` reports dead or missing mirrors, stale visibility and the
+selected runtime without modifying panes; it exits nonzero when unhealthy.
+Missing/incompatible runtimes produce an explicit configuration error.
+Incomplete or unsupported cmux schemas and failed tmux inventories preserve
+existing panes. New surface types preserve existing mappings while known
+terminal tabs keep synchronizing. Control characters in titles are normalized only for tmux names;
+original titles stay in bridge state. Interrupted moves clean up their temporary
+mirror, and raw-mode startup preserves keys typed while a runtime is starting.
 
 Moshi mirrors report the visible phone pane's width and height to cmux using
 `client_id`, `viewport_columns`, and `viewport_rows` on `terminal.replay`.
@@ -29,6 +140,26 @@ desktop resize makes Claude Code reprint its whole conversation into the cmux
 scrollback. Releasing on every swipe stacked ~40 phone-width copies in one tab
 (2026-09-28), which looked like corrupted output when scrolling up in cmux. Other clients'
 viewport reports remain independent.
+
+The replay lease is renewed while reading scrollback as well as while viewing
+live output. Phone rotation and keyboard resize bursts settle for 150 ms before
+the new size is applied, and history is repainted at the settled dimensions.
+Failed viewport clears remain queued across detach or rebinding and retry once
+per second; normal exit makes up to three cleanup attempts. Returning to a
+surface cancels its pending clear so a late retry cannot undo a new attachment.
+Hold/retry timers use monotonic elapsed time. Desktop restoration removes only
+the mirror's own report, allowing cmux to recompute its current native size
+without overwriting another client's viewport or restoring an obsolete size.
+
+`tests/test_mirror_viewport.py` exercises the real mirror loop with controlled
+time and an expiring viewport RPC model, including failed clears and rotation
+while scrolled. It runs in CI alongside the existing grouping and scroll tests.
+For native validation, initialize a disposable single-shell workspace named
+`Moshi viewport test (temporary)` and run
+`python3 tests/live_mirror_viewport.py --workspace <UUID>` from this directory.
+The smoke checks native sizing during scrollback, rotation, transient cleanup
+failure, reconnect, normal exit, SIGKILL expiry, and another client's viewport.
+It never restarts cmux or targets existing working terminals.
 
 Moshi needs a tmux pane through which it can mirror a cmux terminal. These helper sessions use the human tab title plus the agent directory basename:
 
@@ -136,12 +267,24 @@ gets no cmux tab while it runs.
 cmux topology every 15 seconds. Hook events also reconcile before enqueuing.
 Reconciliation uses a shared filesystem lock, atomic metadata writes, and
 explicit ownership tags; unavailable/malformed cmux state never triggers pruning.
+`--status` also checks each mirror's group and index against cmux, so live
+windows at the wrong indexes do not appear healthy. It reports unbound phone
+windows separately; these may contain active programs and are preserved.
 Only a pane visible to an attached client mirrors/resizes its real terminal.
 A shared visibility sampler runs independently of topology reconciliation, once
 per second when idle and four times per second while a phone is active. Grouped
 mirrors stay idle if the sample is missing or stale; they never spawn their own
 fallback tmux queries. This prevents idle subprocess storms when sync is slow.
-The bridge preserves pane IDs across tab reorder/moves and updates titles.
+The bridge preserves pane IDs and the selected window across tab reorder/moves,
+including when an unbound phone window occupies a destination slot. Missing
+indexes are detected from the actual window inventory; tmux `display-message`
+can silently fall back to the selected window for a missing target.
+
+Ctrl-letter keys are forwarded through `terminal.input` as their original bytes. This avoids
+cmux named-key injection losing control keys under the Kitty keyboard
+protocol used by Codex. The optional native smoke flag `--codex-interrupt`
+starts an idle Codex TUI, waits for input initialization, and checks a shell
+marker emitted only after Ctrl+C exits Codex. It sends no model prompt.
 Old per-surface helper sessions are not automatically deleted: restored helpers
 may now contain user shells. The old helper names may remain in the picker;
 new hooks bind to the grouped `cmux-` sessions.
@@ -194,6 +337,20 @@ Full Disk Access → add the real versioned binary (`readlink -f
 /opt/homebrew/bin/tmux`), then restart the tmux server. Re-grant after every
 `brew upgrade tmux`. `python3 tests/live_launchd_documents.py` checks both
 parts; `--skip-grant` checks only the installer's part.
+
+## Mobile tab activation
+
+Changing the selected tmux pane counts as viewing activity even when the client
+has not typed recently. tmux's `client_activity` can stay unchanged after an
+API-driven window selection; using only that timestamp left a newly selected
+mobile tab asleep. A watcher restart alone does not wake unchanged background
+clients.
+
+The mirror batches adjacent text from each input read into one RPC. Forwarding
+a buffered prompt one byte at a time used to block the first frame behind many
+subprocess/RPC calls. Control keys and mouse/terminal sequences remain ordered
+and separate. The shared visibility sampler still polls slowly when inactive;
+its detection interval and cmux/network latency can add to activation time.
 
 ## Scrolling a mirror from the phone
 
